@@ -6,6 +6,7 @@ export interface MailServerStatus {
 	aliases: number | null;
 	deletedAccounts: number | null;
 	mailStorageBytes: number | null;
+	trashBytes: number | null;
 	deletedMailBytes: number | null;
 	queue: { messages: number | null };
 }

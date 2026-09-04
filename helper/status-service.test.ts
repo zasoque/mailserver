@@ -14,6 +14,7 @@ const deleted = {
 		]
 	})
 };
+const trash = { totalBytes: async () => 20 };
 
 describe('StatusService', () => {
 	test('returns counts, storage, service states, and queue count', async () => {
@@ -21,6 +22,7 @@ describe('StatusService', () => {
 			accounts as never,
 			aliases as never,
 			deleted as never,
+			trash as never,
 			{ postqueuePath: '/unused' },
 			{ probe: async () => 'running', queueCount: async () => 3 }
 		);
@@ -30,6 +32,7 @@ describe('StatusService', () => {
 		expect(result.deletedAccounts).toBe(1);
 		expect(result.mailStorageBytes).toBe(100);
 		expect(result.deletedMailBytes).toBe(25);
+		expect(result.trashBytes).toBe(20);
 		expect(result.queue.messages).toBe(3);
 		expect(result.services.smtp.status).toBe('running');
 	});
@@ -39,6 +42,7 @@ describe('StatusService', () => {
 			accounts as never,
 			aliases as never,
 			deleted as never,
+			trash as never,
 			{ postqueuePath: '/unused' },
 			{
 				probe: async (_host, port) => {

@@ -6,6 +6,7 @@ describe('admin route protection', () => {
 		expect(isProtectedAdminApi('/api/status')).toBeTrue();
 		expect(isProtectedAdminApi('/api/deleted')).toBeTrue();
 		expect(isProtectedAdminApi('/api/deleted/archive/restore')).toBeTrue();
+		expect(isProtectedAdminApi('/api/accounts/test@zasoque.org/trash')).toBeTrue();
 	});
 
 	test('protects dashboard and deleted pages', () => {

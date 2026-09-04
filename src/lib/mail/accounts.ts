@@ -28,7 +28,8 @@ export interface AccountsApiError {
 			| 'postmap_failed'
 			| 'archive_not_found'
 			| 'archive_conflict'
-			| 'confirmation_mismatch';
+			| 'confirmation_mismatch'
+			| 'trash_operation_failed';
 		message: string;
 	};
 }

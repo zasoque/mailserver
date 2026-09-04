@@ -22,6 +22,7 @@ import type {
 	RestoreDeletedAccountResponse
 } from '$lib/mail/deleted';
 import type { MailServerStatus } from '$lib/mail/status';
+import type { EmptyTrashRequest, EmptyTrashResponse, TrashStatus } from '$lib/mail/trash';
 
 export class MailHelperClientError extends Error {
 	constructor(
@@ -136,6 +137,42 @@ export async function permanentlyDeleteArchiveWithHelper(
 		);
 	}
 	return body;
+}
+
+export async function getTrashStatusWithHelper(address: string): Promise<TrashStatus> {
+	const body = await requestHelper(`/accounts/${encodeURIComponent(address)}/trash`, 'GET');
+	if (!isTrashStatus(body)) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The helper returned invalid Trash data.'
+		);
+	}
+	return body;
+}
+
+export async function emptyTrashWithHelper(
+	address: string,
+	request: EmptyTrashRequest
+): Promise<EmptyTrashResponse> {
+	const body = await requestHelper(
+		`/accounts/${encodeURIComponent(address)}/trash`,
+		'DELETE',
+		request
+	);
+	if (
+		!isTrashStatus(body) ||
+		!('address' in body) ||
+		!('emptied' in body) ||
+		body.emptied !== true
+	) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The helper returned invalid Trash data.'
+		);
+	}
+	return body as EmptyTrashResponse;
 }
 
 export async function createAccountWithHelper(
@@ -300,6 +337,9 @@ function readHelperError(value: unknown): AccountsApiError['error'] {
 		if (value.error.code === 'confirmation_mismatch') {
 			return { code: 'confirmation_mismatch', message: value.error.message };
 		}
+		if (value.error.code === 'trash_operation_failed') {
+			return { code: 'trash_operation_failed', message: value.error.message };
+		}
 		if (value.error.code === 'filesystem_error') {
 			return { code: 'repository_error', message: 'The privileged mail helper operation failed.' };
 		}
@@ -401,8 +441,28 @@ function isMailServerStatus(value: unknown): value is MailServerStatus {
 	if (typeof value !== 'object' || value === null || !('services' in value) || !('queue' in value))
 		return false;
 	const record = value as Record<string, unknown>;
-	return ['accounts', 'aliases', 'deletedAccounts', 'mailStorageBytes', 'deletedMailBytes'].every(
-		(key) => typeof record[key] === 'number' || record[key] === null
+	return [
+		'accounts',
+		'aliases',
+		'deletedAccounts',
+		'mailStorageBytes',
+		'trashBytes',
+		'deletedMailBytes'
+	].every((key) => typeof record[key] === 'number' || record[key] === null);
+}
+
+function isTrashStatus(value: unknown): value is TrashStatus {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'mailbox' in value &&
+		'exists' in value &&
+		'messages' in value &&
+		'bytes' in value &&
+		value.mailbox === 'Trash' &&
+		typeof value.exists === 'boolean' &&
+		typeof value.messages === 'number' &&
+		typeof value.bytes === 'number'
 	);
 }
 

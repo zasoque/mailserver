@@ -5,6 +5,7 @@ import { AliasService } from './alias-service';
 import { DeletedAccountService } from './deleted-account-service';
 import { OperationQueue } from './operation-queue';
 import { StatusService } from './status-service';
+import { TrashService } from './trash-service';
 
 const HOST = '127.0.0.1';
 const PORT = parsePort(process.env.MAIL_HELPER_PORT);
@@ -42,7 +43,14 @@ const deletedAccountService = new DeletedAccountService(
 	},
 	{ operationQueue }
 );
-const statusService = new StatusService(reader, aliasService, deletedAccountService, {
+const trashService = new TrashService(
+	{
+		usersFilePath: '/opt/homebrew/etc/dovecot/users',
+		doveadmPath: '/opt/homebrew/bin/doveadm'
+	},
+	{ operationQueue }
+);
+const statusService = new StatusService(reader, aliasService, deletedAccountService, trashService, {
 	postqueuePath: '/usr/sbin/postqueue'
 });
 
@@ -62,6 +70,7 @@ const server = createServer(async (request, response) => {
 	const deleteAddress = matchAccountDeleteRoute(request);
 	const aliasAddress = matchAliasRoute(request);
 	const deletedRoute = matchDeletedRoute(request);
+	const trashAddress = matchTrashRoute(request);
 	const isListRequest = request.method === 'GET' && request.url === '/accounts';
 	const isCreateRequest = request.method === 'POST' && request.url === '/accounts';
 	const isAliasListRequest = request.method === 'GET' && request.url === '/aliases';
@@ -78,7 +87,8 @@ const server = createServer(async (request, response) => {
 		passwordAddress === null &&
 		deleteAddress === null &&
 		aliasAddress === null &&
-		deletedRoute === null
+		deletedRoute === null &&
+		trashAddress === null
 	) {
 		sendJson(response, 404, { error: { code: 'not_found', message: 'Not found.' } });
 		return;
@@ -88,6 +98,7 @@ const server = createServer(async (request, response) => {
 		!isAliasListRequest &&
 		!isStatusRequest &&
 		!isDeletedListRequest &&
+		!(request.method === 'GET' && trashAddress !== null) &&
 		deleteAddress === null &&
 		!(request.method === 'DELETE' && aliasAddress !== null) &&
 		!request.headers['content-type']?.toLowerCase().startsWith('application/json')
@@ -99,6 +110,12 @@ const server = createServer(async (request, response) => {
 	try {
 		if (isListRequest) {
 			sendJson(response, 200, await reader.list());
+		} else if (trashAddress !== null && request.method === 'GET') {
+			sendJson(response, 200, await trashService.status(trashAddress));
+		} else if (trashAddress !== null && request.method === 'DELETE') {
+			const result = await trashService.empty(trashAddress, await readJsonBody(request));
+			sendJson(response, 200, result);
+			console.info(`Emptied Trash for mail account ${result.address}`);
 		} else if (isStatusRequest) {
 			sendJson(response, 200, await statusService.get());
 		} else if (isDeletedListRequest) {
@@ -185,7 +202,10 @@ const server = createServer(async (request, response) => {
 				sendJson(response, status, {
 					error: {
 						code: error.code,
-						message: status === 500 ? 'Mail account operation failed.' : error.message
+						message:
+							status === 500 && error.code !== 'trash_operation_failed'
+								? 'Mail account operation failed.'
+								: error.message
 					}
 				});
 			}
@@ -205,6 +225,21 @@ server.listen(PORT, HOST, () => {
 
 function isLoopbackRequest(request: IncomingMessage): boolean {
 	return request.socket.localAddress === HOST && request.socket.remoteAddress === HOST;
+}
+
+function matchTrashRoute(request: IncomingMessage): string | null {
+	if ((request.method !== 'GET' && request.method !== 'DELETE') || request.url === undefined) {
+		return null;
+	}
+	const match = /^\/accounts\/([^/]+)\/trash$/.exec(
+		new URL(request.url, 'http://localhost').pathname
+	);
+	if (!match) return null;
+	try {
+		return decodeURIComponent(match[1]);
+	} catch {
+		return '';
+	}
 }
 
 function matchPasswordChangeRoute(request: IncomingMessage): string | null {

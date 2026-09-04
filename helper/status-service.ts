@@ -4,6 +4,7 @@ import type { MailServerStatus, ServiceState } from '../src/lib/mail/status';
 import type { AccountReader } from './account-reader';
 import type { AliasService } from './alias-service';
 import type { DeletedAccountService } from './deleted-account-service';
+import type { TrashService } from './trash-service';
 
 export interface StatusServiceOptions {
 	postqueuePath: string;
@@ -30,6 +31,7 @@ export class StatusService {
 		private readonly accountReader: AccountReader,
 		private readonly aliasService: AliasService,
 		private readonly deletedAccountService: DeletedAccountService,
+		private readonly trashService: TrashService,
 		private readonly options: StatusServiceOptions,
 		dependencies: StatusServiceDependencies = {}
 	) {
@@ -50,6 +52,11 @@ export class StatusService {
 			settle(() => this.queueCount())
 		]);
 
+		const trashBytes = accounts
+			? await settle(() =>
+					this.trashService.totalBytes(accounts.accounts.map((account) => account.address))
+				)
+			: null;
 		return {
 			services: {
 				smtp: { status: smtp },
@@ -61,6 +68,7 @@ export class StatusService {
 			aliases: aliases?.aliases.length ?? null,
 			deletedAccounts: deleted?.archives.length ?? null,
 			mailStorageBytes: sumKnown(accounts?.accounts.map((account) => account.usageBytes)),
+			trashBytes,
 			deletedMailBytes: sumKnown(deleted?.archives.map((archive) => archive.usageBytes)),
 			queue: { messages: queue }
 		};

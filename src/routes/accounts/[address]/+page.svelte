@@ -17,6 +17,11 @@
 	let deleteConfirmation = $state('');
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
+	let confirmingEmptyTrash = $state(false);
+	let emptyingTrash = $state(false);
+	let trashError = $state<string | null>(null);
+	let trashSuccess = $state<string | null>(null);
+	let displayedTrashError = $derived(trashError ?? data.trashError);
 	const isProtected = $derived(
 		(PROTECTED_ACCOUNT_ADDRESSES as readonly string[]).includes(data.account.address)
 	);
@@ -97,6 +102,38 @@
 			deleting = false;
 		}
 	}
+
+	async function emptyTrash() {
+		if (emptyingTrash) return;
+		emptyingTrash = true;
+		trashError = null;
+		trashSuccess = null;
+		try {
+			const response = await fetch(
+				`/api/accounts/${encodeURIComponent(data.account.address)}/trash`,
+				{
+					method: 'DELETE',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ confirmed: true })
+				}
+			);
+			const body = (await response.json()) as AccountsApiError;
+			if (!response.ok) {
+				trashError = 'error' in body ? body.error.message : 'Could not empty Trash.';
+				return;
+			}
+			confirmingEmptyTrash = false;
+			trashSuccess = 'Trash emptied successfully.';
+			await goto(`/accounts/${encodeURIComponent(data.account.address)}`, {
+				replaceState: true,
+				invalidateAll: true
+			});
+		} catch {
+			trashError = 'Could not empty Trash.';
+		} finally {
+			emptyingTrash = false;
+		}
+	}
 </script>
 
 <svelte:head><title>{data.account.address}</title></svelte:head>
@@ -110,6 +147,29 @@
 	<section class="details" aria-label="Account details">
 		<div><span>Maildir</span><code>{data.maildir}</code></div>
 		<div><span>Usage</span><strong>{formatUsage(data.account.usageBytes)}</strong></div>
+	</section>
+	<section class="panel mailbox-panel">
+		<h2>Mailbox storage</h2>
+		<div class="storage-row">
+			<span>Total storage</span><strong>{formatUsage(data.account.usageBytes)}</strong>
+		</div>
+		<div class="storage-row">
+			<span>Trash</span><strong
+				>{data.trash
+					? `${data.trash.messages.toLocaleString()} messages · ${formatUsage(data.trash.bytes)}`
+					: 'Unavailable'}</strong
+			>
+		</div>
+		{#if data.trash && !data.trash.exists}<p class="muted">
+				Trash mailbox has not been created.
+			</p>{/if}
+		{#if displayedTrashError}<p class="message error" role="alert">{displayedTrashError}</p>{/if}
+		{#if trashSuccess}<p class="message success" role="status">{trashSuccess}</p>{/if}
+		<button
+			type="button"
+			disabled={!data.trash || data.trash.messages === 0}
+			onclick={() => (confirmingEmptyTrash = true)}>Empty Trash</button
+		>
 	</section>
 	<section class="panel">
 		<h2>Change password</h2>
@@ -187,6 +247,31 @@
 	</div>
 {/if}
 
+{#if confirmingEmptyTrash && data.trash}
+	<div class="modal-backdrop" role="presentation">
+		<div class="modal" role="dialog" aria-modal="true" aria-labelledby="empty-trash-title">
+			<h2 id="empty-trash-title">Empty Trash?</h2>
+			<p>
+				This will permanently delete {data.trash.messages.toLocaleString()} messages ({formatUsage(
+					data.trash.bytes
+				)}) from the Trash mailbox of <strong>{data.account.address}</strong>.
+			</p>
+			<p>This action cannot be undone.</p>
+			{#if trashError}<p class="message error" role="alert">{trashError}</p>{/if}
+			<div class="modal-actions">
+				<button
+					class="cancel-button"
+					type="button"
+					disabled={emptyingTrash}
+					onclick={() => (confirmingEmptyTrash = false)}>Cancel</button
+				><button class="delete-button" type="button" disabled={emptyingTrash} onclick={emptyTrash}
+					>{emptyingTrash ? 'Emptying…' : 'Empty Trash'}</button
+				>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	:global(*) {
 		box-sizing: border-box;
@@ -258,6 +343,28 @@
 	}
 	.panel {
 		padding: 24px;
+	}
+	.mailbox-panel {
+		margin-bottom: 20px;
+	}
+	.storage-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 20px;
+		padding: 11px 0;
+		border-bottom: 1px solid #ecece8;
+	}
+	.storage-row span,
+	.muted {
+		color: #686864;
+		font-size: 0.88rem;
+	}
+	.storage-row strong {
+		text-align: right;
+		font-size: 0.9rem;
+	}
+	.muted {
+		margin: 14px 0 0;
 	}
 	h2 {
 		margin: 0 0 22px;

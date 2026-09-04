@@ -59,6 +59,7 @@
 			<article>
 				<span>Stored mail</span><strong>{bytes(data.status.mailStorageBytes)}</strong>
 			</article>
+			<article><span>of which Trash</span><strong>{bytes(data.status.trashBytes)}</strong></article>
 			<a href="/deleted"
 				><span>Deleted mail</span><strong>{bytes(data.status.deletedMailBytes)}</strong></a
 			>

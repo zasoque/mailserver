@@ -86,8 +86,8 @@ sudo install -d -o root -g wheel -m 0755 /usr/local/libexec/zasoque-mailadmin/bi
 sudo install -d -o root -g wheel -m 0755 /usr/local/libexec/zasoque-mailadmin/app/helper
 sudo install -d -o root -g wheel -m 0755 /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail
 sudo install -o root -g wheel -m 0755 /Users/jeonhangyeol/.bun/bin/bun /usr/local/libexec/zasoque-mailadmin/bin/bun
-sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/deleted-account-service.ts helper/status-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
-sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/deleted.ts src/lib/mail/status.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
+sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/deleted-account-service.ts helper/status-service.ts helper/trash-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
+sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/deleted.ts src/lib/mail/status.ts src/lib/mail/trash.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
 sudo install -d -o root -g wheel -m 0755 /var/log/zasoque-mailadmin
 ```
 
@@ -236,8 +236,8 @@ bun install --frozen-lockfile
 bun run check
 bun test
 bun run build
-sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/deleted-account-service.ts helper/status-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
-sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/deleted.ts src/lib/mail/status.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
+sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/deleted-account-service.ts helper/status-service.ts helper/trash-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
+sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/deleted.ts src/lib/mail/status.ts src/lib/mail/trash.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
 sudo launchctl kickstart -k system/org.zasoque.mailadmin.helper
 sudo launchctl kickstart -k system/org.zasoque.mailadmin.web
 ```
@@ -280,3 +280,36 @@ sudo /usr/sbin/postqueue -j
 The curl requests must return `401` without an authenticated session. Use a disposable test account
 for restore and permanent-delete verification; never test those operations against a production
 mailbox or archive that must be retained.
+
+## 10. Active-account Trash
+
+Trash management is separate from deleted-account archives. The verified Dovecot configuration has
+an inbox namespace with `/` as its separator and no `mailbox_special_use=\\Trash` declaration. The
+admin therefore uses the conventional logical mailbox name `Trash` (normally stored as `.Trash` by
+Maildir) and first confirms that exact logical name appears in `doveadm mailbox list`. The current
+configuration reports `mailbox_autoexpunge=0`, so this feature does not alter or duplicate an
+existing automatic-expunge policy.
+
+Status and deletion use fixed argument arrays without a shell:
+
+```text
+/opt/homebrew/bin/doveadm mailbox list -u ADDRESS
+/opt/homebrew/bin/doveadm -f json mailbox status -u ADDRESS "messages vsize" Trash
+/opt/homebrew/bin/doveadm expunge -u ADDRESS mailbox Trash all
+```
+
+`ADDRESS` must first pass strict `zasoque.org` validation and be present in the root-readable Dovecot
+users file. `Trash` is a server constant, never request input. Expunge is limited by both `mailbox
+Trash` and the explicit `all` message-range selector; no filesystem deletion is used. Account
+deletion still archives the entire Maildir, including Trash.
+
+For production verification, use only a disposable account and messages:
+
+```sh
+sudo /opt/homebrew/bin/doveadm mailbox list -u test@zasoque.org
+sudo /opt/homebrew/bin/doveadm -f json mailbox status -u test@zasoque.org "messages vsize" Trash
+```
+
+Move known disposable messages to Trash through an IMAP client, inspect the account detail page,
+confirm Empty Trash there, and repeat the read-only status command. Never use an operational account
+for the destructive verification.

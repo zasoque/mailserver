@@ -43,6 +43,7 @@ export type AccountCreatorErrorCode =
 	| 'archive_not_found'
 	| 'archive_conflict'
 	| 'confirmation_mismatch'
+	| 'trash_operation_failed'
 	| 'doveadm_failed'
 	| 'filesystem_error';
 
