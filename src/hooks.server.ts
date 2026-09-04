@@ -18,8 +18,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
-	const protectedPage = pathname === '/accounts' || pathname.startsWith('/accounts/');
-	const protectedApi = pathname === '/api/accounts' || pathname.startsWith('/api/accounts/');
+	const protectedPage =
+		pathname === '/accounts' ||
+		pathname.startsWith('/accounts/') ||
+		pathname === '/aliases' ||
+		pathname.startsWith('/aliases/');
+	const protectedApi =
+		pathname === '/api/accounts' ||
+		pathname.startsWith('/api/accounts/') ||
+		pathname === '/api/aliases' ||
+		pathname.startsWith('/api/aliases/');
 	const logoutApi = pathname === '/api/auth/logout';
 	if (pathname === '/') redirect(303, event.locals.adminUsername ? '/accounts' : '/login');
 	if (!event.locals.adminUsername && (protectedPage || protectedApi || logoutApi)) {

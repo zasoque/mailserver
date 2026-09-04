@@ -22,6 +22,7 @@ import type {
 	DeleteAccountResponse
 } from '../src/lib/mail/accounts';
 import { PROTECTED_ACCOUNT_ADDRESSES } from '../src/lib/mail/config';
+import { OperationQueue } from './operation-queue';
 
 export const ALLOWED_DOMAIN = 'zasoque.org' as const;
 const USERNAME_PATTERN = /^[a-z0-9._-]{1,64}$/;
@@ -32,6 +33,13 @@ export type AccountCreatorErrorCode =
 	| 'account_exists'
 	| 'account_not_found'
 	| 'protected_account'
+	| 'alias_in_use'
+	| 'alias_exists'
+	| 'alias_not_found'
+	| 'account_address_conflict'
+	| 'destination_not_found'
+	| 'protected_alias'
+	| 'postmap_failed'
 	| 'doveadm_failed'
 	| 'filesystem_error';
 
@@ -52,16 +60,18 @@ export interface AccountCreatorOptions {
 	doveadmPath: string;
 	uid: number;
 	gid: number;
+	virtualAliasFilePath?: string;
 }
 
 export interface AccountCreatorDependencies {
 	hashPassword?: (password: string) => Promise<string>;
 	chownTree?: (target: string, uid: number, gid: number) => Promise<void>;
 	moveMailbox?: (source: string, destination: string) => Promise<void>;
+	operationQueue?: OperationQueue;
 }
 
 export class AccountCreator {
-	private operationQueue: Promise<void> = Promise.resolve();
+	private readonly operationQueue: OperationQueue;
 	private readonly hashPassword: (password: string) => Promise<string>;
 	private readonly chownTree: (target: string, uid: number, gid: number) => Promise<void>;
 	private readonly moveMailbox: (source: string, destination: string) => Promise<void>;
@@ -75,37 +85,21 @@ export class AccountCreator {
 			((password) => hashPasswordWithDoveadm(options.doveadmPath, password));
 		this.chownTree = dependencies.chownTree ?? chownDirectoryTree;
 		this.moveMailbox = dependencies.moveMailbox ?? rename;
+		this.operationQueue = dependencies.operationQueue ?? new OperationQueue();
 	}
 
 	create(input: unknown): Promise<CreateAccountResponse> {
-		const operation = this.operationQueue.then(() =>
-			this.createLocked(validateCreateRequest(input))
-		);
-		this.operationQueue = operation.then(
-			() => undefined,
-			() => undefined
-		);
-		return operation;
+		return this.operationQueue.run(() => this.createLocked(validateCreateRequest(input)));
 	}
 
 	changePassword(address: unknown, input: unknown): Promise<ChangePasswordResponse> {
-		const operation = this.operationQueue.then(() =>
+		return this.operationQueue.run(() =>
 			this.changePasswordLocked(validateAddress(address), validateChangePasswordRequest(input))
 		);
-		this.operationQueue = operation.then(
-			() => undefined,
-			() => undefined
-		);
-		return operation;
 	}
 
 	delete(address: unknown): Promise<DeleteAccountResponse> {
-		const operation = this.operationQueue.then(() => this.deleteLocked(validateAddress(address)));
-		this.operationQueue = operation.then(
-			() => undefined,
-			() => undefined
-		);
-		return operation;
+		return this.operationQueue.run(() => this.deleteLocked(validateAddress(address)));
 	}
 
 	private async createLocked(request: CreateAccountRequest): Promise<CreateAccountResponse> {
@@ -120,6 +114,15 @@ export class AccountCreator {
 			originalUsersContents = await readFile(this.options.usersFilePath, 'utf8');
 			if (containsAddress(originalUsersContents, address) || (await pathExists(mailHome))) {
 				throw new AccountCreatorError('account_exists', 'The mail account already exists.');
+			}
+			if (
+				this.options.virtualAliasFilePath &&
+				(await aliasAddressExists(this.options.virtualAliasFilePath, address))
+			) {
+				throw new AccountCreatorError(
+					'account_address_conflict',
+					'An alias already exists with this address.'
+				);
 			}
 
 			const passwordHash = await this.hashPassword(request.password);
@@ -228,6 +231,18 @@ export class AccountCreator {
 		try {
 			originalUsersContents = await readFile(this.options.usersFilePath, 'utf8');
 			const updatedUsersContents = removeAccountLine(originalUsersContents, address);
+			if (this.options.virtualAliasFilePath) {
+				const aliasCount = await countAliasesForDestination(
+					this.options.virtualAliasFilePath,
+					address
+				);
+				if (aliasCount > 0) {
+					throw new AccountCreatorError(
+						'alias_in_use',
+						`This account is used by ${aliasCount} alias${aliasCount === 1 ? '' : 'es'}. Remove or redirect its aliases before deleting the account.`
+					);
+				}
+			}
 			const mailboxExists = await pathExists(mailHome);
 			let archivePath: string | null = null;
 			if (mailboxExists) {
@@ -449,6 +464,40 @@ function removeAccountLine(contents: string, address: string): string {
 	return parts.join('');
 }
 
+async function countAliasesForDestination(
+	aliasFilePath: string,
+	destination: string
+): Promise<number> {
+	const contents = await readFile(aliasFilePath, 'utf8');
+	let count = 0;
+	for (const rawLine of contents.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (line === '' || line.startsWith('#')) continue;
+		const fields = line.split(/\s+/);
+		if (fields.length !== 2) {
+			throw new AccountCreatorError('filesystem_error', 'The virtual alias file is invalid.');
+		}
+		validateAddress(fields[0]);
+		if (validateAddress(fields[1]) === destination) count += 1;
+	}
+	return count;
+}
+
+async function aliasAddressExists(aliasFilePath: string, address: string): Promise<boolean> {
+	const contents = await readFile(aliasFilePath, 'utf8');
+	for (const rawLine of contents.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (line === '' || line.startsWith('#')) continue;
+		const fields = line.split(/\s+/);
+		if (fields.length !== 2) {
+			throw new AccountCreatorError('filesystem_error', 'The virtual alias file is invalid.');
+		}
+		if (validateAddress(fields[0]) === address) return true;
+		validateAddress(fields[1]);
+	}
+	return false;
+}
+
 function validatePassword(password: unknown): asserts password is string {
 	if (
 		typeof password !== 'string' ||
@@ -463,7 +512,7 @@ function validatePassword(password: unknown): asserts password is string {
 	}
 }
 
-async function createTimestampedBackup(usersFilePath: string): Promise<string> {
+export async function createTimestampedBackup(usersFilePath: string): Promise<string> {
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 	const backupPath = `${usersFilePath}.${timestamp}.${randomUUID()}.bak`;
 	await copyFile(usersFilePath, backupPath, constants.COPYFILE_EXCL);
@@ -476,7 +525,7 @@ async function createTimestampedBackup(usersFilePath: string): Promise<string> {
 	return backupPath;
 }
 
-async function atomicWrite(
+export async function atomicWrite(
 	targetPath: string,
 	contents: string,
 	mode: number,

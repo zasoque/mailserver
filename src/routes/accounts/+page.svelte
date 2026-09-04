@@ -27,6 +27,7 @@
 </svelte:head>
 
 <main>
+	<nav><a class="active" href="/accounts">Accounts</a><a href="/aliases">Aliases</a></nav>
 	<header>
 		<div>
 			<p class="eyebrow">Mail server</p>
@@ -101,6 +102,22 @@
 		width: min(960px, calc(100% - 40px));
 		margin: 0 auto;
 		padding: 64px 0;
+	}
+	nav {
+		display: flex;
+		gap: 22px;
+		margin-bottom: 42px;
+		border-bottom: 1px solid #deded9;
+	}
+	nav a {
+		padding: 0 2px 12px;
+		color: #6b6b67;
+		text-decoration: none;
+	}
+	nav .active {
+		border-bottom: 2px solid #171717;
+		color: #171717;
+		font-weight: 650;
 	}
 	header {
 		display: flex;

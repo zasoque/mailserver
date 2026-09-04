@@ -8,6 +8,12 @@ import type {
 	CreateAccountResponse,
 	DeleteAccountResponse
 } from '$lib/mail/accounts';
+import type {
+	AliasMutationResponse,
+	AliasesApiResponse,
+	CreateAliasRequest,
+	UpdateAliasRequest
+} from '$lib/mail/aliases';
 
 export class MailHelperClientError extends Error {
 	constructor(
@@ -35,6 +41,39 @@ export async function listAccountsWithHelper(): Promise<AccountsApiResponse> {
 			{ cause: error }
 		);
 	}
+}
+
+export async function listAliasesWithHelper(): Promise<AliasesApiResponse> {
+	const body = await requestHelper('/aliases', 'GET');
+	if (!isAliasesApiResponse(body)) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The mail helper returned invalid alias data.'
+		);
+	}
+	return body;
+}
+
+export async function createAliasWithHelper(
+	request: CreateAliasRequest
+): Promise<AliasMutationResponse> {
+	return requireAliasMutationResponse(await requestHelper('/aliases', 'POST', request));
+}
+
+export async function updateAliasWithHelper(
+	address: string,
+	request: UpdateAliasRequest
+): Promise<AliasMutationResponse> {
+	return requireAliasMutationResponse(
+		await requestHelper(`/aliases/${encodeURIComponent(address)}`, 'PATCH', request)
+	);
+}
+
+export async function deleteAliasWithHelper(address: string): Promise<AliasMutationResponse> {
+	return requireAliasMutationResponse(
+		await requestHelper(`/aliases/${encodeURIComponent(address)}`, 'DELETE')
+	);
 }
 
 export async function createAccountWithHelper(
@@ -169,10 +208,34 @@ function readHelperError(value: unknown): AccountsApiError['error'] {
 		if (value.error.code === 'protected_account') {
 			return { code: 'protected_account', message: value.error.message };
 		}
+		if (value.error.code === 'alias_exists') {
+			return { code: 'alias_exists', message: value.error.message };
+		}
+		if (value.error.code === 'alias_not_found') {
+			return { code: 'alias_not_found', message: value.error.message };
+		}
+		if (value.error.code === 'account_address_conflict') {
+			return { code: 'account_address_conflict', message: value.error.message };
+		}
+		if (value.error.code === 'destination_not_found') {
+			return { code: 'destination_not_found', message: value.error.message };
+		}
+		if (value.error.code === 'protected_alias') {
+			return { code: 'protected_alias', message: value.error.message };
+		}
+		if (value.error.code === 'alias_in_use') {
+			return { code: 'alias_in_use', message: value.error.message };
+		}
+		if (value.error.code === 'postmap_failed') {
+			return { code: 'postmap_failed', message: value.error.message };
+		}
+		if (value.error.code === 'filesystem_error') {
+			return { code: 'repository_error', message: 'The privileged mail helper operation failed.' };
+		}
 	}
 	return {
 		code: 'creation_failed',
-		message: 'The privileged mail helper could not create the account.'
+		message: 'The privileged mail helper operation failed.'
 	};
 }
 
@@ -202,6 +265,38 @@ function isAccountsApiResponse(value: unknown): value is AccountsApiResponse {
 				typeof account.address === 'string' &&
 				(typeof account.usageBytes === 'number' || account.usageBytes === null)
 		)
+	);
+}
+
+function isAliasesApiResponse(value: unknown): value is AliasesApiResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'aliases' in value &&
+		Array.isArray(value.aliases) &&
+		value.aliases.every(isAlias)
+	);
+}
+
+function requireAliasMutationResponse(value: unknown): AliasMutationResponse {
+	if (!isAlias(value)) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The mail helper returned invalid alias data.'
+		);
+	}
+	return value;
+}
+
+function isAlias(value: unknown): value is AliasMutationResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'address' in value &&
+		'destination' in value &&
+		typeof value.address === 'string' &&
+		typeof value.destination === 'string'
 	);
 }
 

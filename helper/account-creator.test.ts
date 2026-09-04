@@ -197,6 +197,47 @@ describe('AccountCreator', () => {
 			code: 'account_not_found'
 		});
 	});
+
+	test('refuses to delete an account used as an alias destination', async () => {
+		const fixture = await createFixture('test@zasoque.org:{CRYPT}$2y$test\n');
+		const aliasFilePath = path.join(fixture.root, 'virtual_alias');
+		await writeFile(aliasFilePath, 'admin@zasoque.org test@zasoque.org\n');
+		const creator = new AccountCreator(
+			{
+				usersFilePath: fixture.usersFilePath,
+				vmailRoot: fixture.vmailRoot,
+				doveadmPath: '/unused',
+				uid: 500,
+				gid: 500,
+				virtualAliasFilePath: aliasFilePath
+			},
+			{ hashPassword: async () => '{BLF-CRYPT}$2y$test-hash', chownTree: async () => undefined }
+		);
+		await expect(creator.delete('test@zasoque.org')).rejects.toMatchObject({
+			code: 'alias_in_use'
+		});
+		expect(await readFile(fixture.usersFilePath, 'utf8')).toContain('test@zasoque.org:');
+	});
+
+	test('refuses to create an account over an existing alias address', async () => {
+		const fixture = await createFixture('');
+		const aliasFilePath = path.join(fixture.root, 'virtual_alias');
+		await writeFile(aliasFilePath, 'contact@zasoque.org jeonhangyeol@zasoque.org\n');
+		const creator = new AccountCreator(
+			{
+				usersFilePath: fixture.usersFilePath,
+				vmailRoot: fixture.vmailRoot,
+				doveadmPath: '/unused',
+				uid: 500,
+				gid: 500,
+				virtualAliasFilePath: aliasFilePath
+			},
+			{ hashPassword: async () => '{BLF-CRYPT}$2y$test-hash', chownTree: async () => undefined }
+		);
+		await expect(
+			creator.create({ username: 'contact', domain: 'zasoque.org', password: 'secret' })
+		).rejects.toMatchObject({ code: 'account_address_conflict' });
+	});
 });
 
 async function createFixture(initialUsers = '') {

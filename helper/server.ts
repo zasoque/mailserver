@@ -1,19 +1,34 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AccountCreator, AccountCreatorError } from './account-creator';
 import { AccountReader } from './account-reader';
+import { AliasService } from './alias-service';
+import { OperationQueue } from './operation-queue';
 
 const HOST = '127.0.0.1';
 const PORT = parsePort(process.env.MAIL_HELPER_PORT);
 const MAX_REQUEST_BYTES = 16 * 1024;
 
-const creator = new AccountCreator({
-	usersFilePath: '/opt/homebrew/etc/dovecot/users',
-	vmailRoot: '/Users/Shared/vmail',
-	doveadmPath: '/opt/homebrew/bin/doveadm',
-	uid: 500,
-	gid: 500
-});
+const operationQueue = new OperationQueue();
+const creator = new AccountCreator(
+	{
+		usersFilePath: '/opt/homebrew/etc/dovecot/users',
+		vmailRoot: '/Users/Shared/vmail',
+		doveadmPath: '/opt/homebrew/bin/doveadm',
+		virtualAliasFilePath: '/etc/postfix/virtual_alias',
+		uid: 500,
+		gid: 500
+	},
+	{ operationQueue }
+);
 const reader = new AccountReader('/opt/homebrew/etc/dovecot/users', '/Users/Shared/vmail');
+const aliasService = new AliasService(
+	{
+		aliasFilePath: '/etc/postfix/virtual_alias',
+		usersFilePath: '/opt/homebrew/etc/dovecot/users',
+		postmapPath: '/usr/sbin/postmap'
+	},
+	{ operationQueue }
+);
 
 const server = createServer(async (request, response) => {
 	setSecurityHeaders(response);
@@ -29,15 +44,28 @@ const server = createServer(async (request, response) => {
 	}
 	const passwordAddress = matchPasswordChangeRoute(request);
 	const deleteAddress = matchAccountDeleteRoute(request);
+	const aliasAddress = matchAliasRoute(request);
 	const isListRequest = request.method === 'GET' && request.url === '/accounts';
 	const isCreateRequest = request.method === 'POST' && request.url === '/accounts';
-	if (!isListRequest && !isCreateRequest && passwordAddress === null && deleteAddress === null) {
+	const isAliasListRequest = request.method === 'GET' && request.url === '/aliases';
+	const isAliasCreateRequest = request.method === 'POST' && request.url === '/aliases';
+	if (
+		!isListRequest &&
+		!isCreateRequest &&
+		!isAliasListRequest &&
+		!isAliasCreateRequest &&
+		passwordAddress === null &&
+		deleteAddress === null &&
+		aliasAddress === null
+	) {
 		sendJson(response, 404, { error: { code: 'not_found', message: 'Not found.' } });
 		return;
 	}
 	if (
 		!isListRequest &&
+		!isAliasListRequest &&
 		deleteAddress === null &&
+		!(request.method === 'DELETE' && aliasAddress !== null) &&
 		!request.headers['content-type']?.toLowerCase().startsWith('application/json')
 	) {
 		sendJson(response, 415, { error: { code: 'invalid_request', message: 'JSON is required.' } });
@@ -47,6 +75,20 @@ const server = createServer(async (request, response) => {
 	try {
 		if (isListRequest) {
 			sendJson(response, 200, await reader.list());
+		} else if (isAliasListRequest) {
+			sendJson(response, 200, await aliasService.list());
+		} else if (isAliasCreateRequest) {
+			const result = await aliasService.create(await readJsonBody(request));
+			sendJson(response, 201, result);
+			console.info(`Created alias ${result.address} -> ${result.destination}`);
+		} else if (aliasAddress !== null && request.method === 'PATCH') {
+			const result = await aliasService.update(aliasAddress, await readJsonBody(request));
+			sendJson(response, 200, result);
+			console.info(`Updated alias ${result.address} -> ${result.destination}`);
+		} else if (aliasAddress !== null && request.method === 'DELETE') {
+			const result = await aliasService.delete(aliasAddress);
+			sendJson(response, 200, result);
+			console.info(`Deleted alias ${result.address} -> ${result.destination}`);
 		} else if (deleteAddress !== null) {
 			const result = await creator.delete(deleteAddress);
 			sendJson(response, 200, result);
@@ -77,11 +119,19 @@ const server = createServer(async (request, response) => {
 					? 409
 					: error.code === 'account_not_found'
 						? 404
-						: error.code === 'protected_account'
-							? 403
-							: error.code === 'invalid_request'
-								? 400
-								: 500;
+						: error.code === 'alias_not_found' || error.code === 'destination_not_found'
+							? 404
+							: error.code === 'alias_exists' ||
+								  error.code === 'account_address_conflict' ||
+								  error.code === 'alias_in_use'
+								? 409
+								: error.code === 'protected_account'
+									? 403
+									: error.code === 'protected_alias'
+										? 403
+										: error.code === 'invalid_request'
+											? 400
+											: 500;
 			if (error.code === 'protected_account') {
 				sendJson(response, status, { error: error.message });
 			} else {
@@ -126,6 +176,19 @@ function matchPasswordChangeRoute(request: IncomingMessage): string | null {
 function matchAccountDeleteRoute(request: IncomingMessage): string | null {
 	if (request.method !== 'DELETE' || request.url === undefined) return null;
 	const match = /^\/accounts\/([^/]+)$/.exec(new URL(request.url, 'http://localhost').pathname);
+	if (!match) return null;
+	try {
+		return decodeURIComponent(match[1]);
+	} catch {
+		return '';
+	}
+}
+
+function matchAliasRoute(request: IncomingMessage): string | null {
+	if ((request.method !== 'PATCH' && request.method !== 'DELETE') || request.url === undefined) {
+		return null;
+	}
+	const match = /^\/aliases\/([^/]+)$/.exec(new URL(request.url, 'http://localhost').pathname);
 	if (!match) return null;
 	try {
 		return decodeURIComponent(match[1]);

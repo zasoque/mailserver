@@ -18,7 +18,14 @@ export interface AccountsApiError {
 			| 'account_not_found'
 			| 'protected_account'
 			| 'helper_unavailable'
-			| 'creation_failed';
+			| 'creation_failed'
+			| 'alias_exists'
+			| 'alias_not_found'
+			| 'account_address_conflict'
+			| 'destination_not_found'
+			| 'protected_alias'
+			| 'alias_in_use'
+			| 'postmap_failed';
 		message: string;
 	};
 }
