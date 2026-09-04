@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { chmod, chown, copyFile, lstat, open, readFile, rm, stat } from 'node:fs/promises';
+import path from 'node:path';
 import type {
 	AliasMutationResponse,
 	AliasesApiResponse,
@@ -8,18 +11,14 @@ import type {
 	VirtualAlias
 } from '../src/lib/mail/aliases';
 import { PROTECTED_ALIAS_ADDRESSES } from '../src/lib/mail/config';
-import {
-	AccountCreatorError,
-	atomicWrite,
-	createTimestampedBackup,
-	validateAddress
-} from './account-creator';
+import { AccountCreatorError, atomicWrite, validateAddress } from './account-creator';
 import { OperationQueue } from './operation-queue';
 
 export interface AliasServiceOptions {
 	aliasFilePath: string;
 	usersFilePath: string;
 	postmapPath: string;
+	backupDirectoryPath: string;
 }
 
 export interface AliasServiceDependencies {
@@ -51,6 +50,44 @@ export class AliasService {
 			aliases.sort((first, second) => first.address.localeCompare(second.address));
 			return { aliases };
 		});
+	}
+
+	async verifyMutationAccess(): Promise<void> {
+		await probeWritableDirectory(await validateBackupDirectory(this.options.backupDirectoryPath));
+		const directory = await validateAliasDirectory(path.dirname(this.options.aliasFilePath));
+		const probePath = path.join(directory, `.write-test.${randomUUID()}`);
+		let probeExists = false;
+		try {
+			const probe = await open(probePath, 'wx', 0o600);
+			probeExists = true;
+			try {
+				await probe.chmod(0o600);
+				await probe.sync();
+			} finally {
+				await probe.close();
+			}
+		} finally {
+			if (probeExists) await rm(probePath, { force: true });
+		}
+
+		const before = await validateAliasSource(this.options.aliasFilePath);
+		const source = await open(this.options.aliasFilePath, 'r');
+		try {
+			const opened = await source.stat();
+			if (opened.dev !== before.dev || opened.ino !== before.ino || !opened.isFile()) {
+				throw new Error('The alias source changed while it was being opened.');
+			}
+		} finally {
+			await source.close();
+		}
+	}
+
+	private async sourceMetadata() {
+		const before = await validateAliasSource(this.options.aliasFilePath);
+		if (!before.isFile() || before.isSymbolicLink()) {
+			throw new Error('The alias source is not a safe regular file.');
+		}
+		return before;
 	}
 
 	create(input: unknown): Promise<AliasMutationResponse> {
@@ -123,8 +160,19 @@ export class AliasService {
 	): Promise<AliasMutationResponse> {
 		const original = await this.readAliasFile();
 		const changed = await change(original);
-		const metadata = await stat(this.options.aliasFilePath);
-		await createTimestampedBackup(this.options.aliasFilePath);
+		const metadata = await this.sourceMetadata();
+		try {
+			await createExternalBackup(this.options.aliasFilePath, this.options.backupDirectoryPath);
+		} catch (error) {
+			console.error(`alias backup failure: ${safeErrorMessage(error)}`);
+			throw new AccountCreatorError(
+				'filesystem_error',
+				'Unable to back up the virtual alias file.',
+				{
+					cause: error
+				}
+			);
+		}
 		let postmapStarted = false;
 		try {
 			await atomicWrite(
@@ -190,6 +238,91 @@ export class AliasService {
 				cause: error
 			});
 		}
+	}
+}
+
+async function createExternalBackup(
+	sourcePath: string,
+	backupDirectoryPath: string
+): Promise<string> {
+	const directory = await validateBackupDirectory(backupDirectoryPath);
+	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+	const backupPath = path.join(
+		directory,
+		`${path.basename(sourcePath)}.${timestamp}.${randomUUID()}.bak`
+	);
+	await copyFile(sourcePath, backupPath, constants.COPYFILE_EXCL);
+	const backup = await open(backupPath, 'r+');
+	try {
+		await backup.chmod(0o600);
+		await backup.sync();
+	} finally {
+		await backup.close();
+	}
+	const directoryHandle = await open(directory, 'r');
+	try {
+		await directoryHandle.sync();
+	} finally {
+		await directoryHandle.close();
+	}
+	return backupPath;
+}
+
+async function validateBackupDirectory(backupDirectoryPath: string): Promise<string> {
+	const directory = path.resolve(backupDirectoryPath);
+	const info = await lstat(directory);
+	if (
+		!info.isDirectory() ||
+		info.isSymbolicLink() ||
+		info.uid !== process.geteuid?.() ||
+		(info.mode & 0o022) !== 0
+	) {
+		throw new Error('The alias backup directory is unsafe.');
+	}
+	return directory;
+}
+
+async function validateAliasDirectory(directoryPath: string): Promise<string> {
+	const directory = path.resolve(directoryPath);
+	const info = await lstat(directory);
+	if (
+		!info.isDirectory() ||
+		info.isSymbolicLink() ||
+		info.uid !== process.geteuid?.() ||
+		(info.mode & 0o022) !== 0
+	) {
+		throw new Error('The alias source directory is unsafe.');
+	}
+	return directory;
+}
+
+async function validateAliasSource(sourcePath: string) {
+	const info = await lstat(sourcePath);
+	if (
+		!info.isFile() ||
+		info.isSymbolicLink() ||
+		info.uid !== process.geteuid?.() ||
+		(info.mode & 0o077) !== 0
+	) {
+		throw new Error('The alias source is not a safe owner-only regular file.');
+	}
+	return info;
+}
+
+async function probeWritableDirectory(directory: string): Promise<void> {
+	const probePath = path.join(directory, `.write-test.${randomUUID()}`);
+	let exists = false;
+	try {
+		const file = await open(probePath, 'wx', 0o600);
+		exists = true;
+		try {
+			await file.chmod(0o600);
+			await file.sync();
+		} finally {
+			await file.close();
+		}
+	} finally {
+		if (exists) await rm(probePath, { force: true });
 	}
 }
 
@@ -274,7 +407,7 @@ async function readAccountAddresses(usersFilePath: string): Promise<Set<string>>
 }
 
 async function runPostmap(postmapPath: string, aliasFilePath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
+	await new Promise<void>((resolve, reject) => {
 		const child = spawn(postmapPath, [aliasFilePath], {
 			shell: false,
 			stdio: ['ignore', 'ignore', 'pipe'],
@@ -291,6 +424,10 @@ async function runPostmap(postmapPath: string, aliasFilePath: string): Promise<v
 			else reject(new Error(`postmap exited with code ${code}: ${stderr.trim()}`));
 		});
 	});
+	const directory = await stat(path.dirname(aliasFilePath));
+	const databasePath = `${aliasFilePath}.db`;
+	await chown(databasePath, 0, directory.gid);
+	await chmod(databasePath, 0o640);
 }
 
 function safeErrorMessage(error: unknown): string {

@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	rm,
+	stat,
+	symlink,
+	writeFile
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AliasService } from './alias-service';
@@ -22,6 +32,14 @@ describe('AliasService', () => {
 		});
 	});
 
+	test('preflights the external backup directory and existing source without changing it', async () => {
+		const fixture = await createFixture('admin@zasoque.org jeonhangyeol@zasoque.org\n');
+		const original = await readFile(fixture.aliasFilePath, 'utf8');
+		await fixture.service().verifyMutationAccess();
+		expect(await readFile(fixture.aliasFilePath, 'utf8')).toBe(original);
+		expect(await readdir(fixture.backupDirectoryPath)).toEqual([]);
+	});
+
 	test('creates an alias, preserves metadata, backs up source, and runs postmap', async () => {
 		const fixture = await createFixture('# aliases\n');
 		let postmapCalls = 0;
@@ -42,10 +60,45 @@ describe('AliasService', () => {
 		);
 		expect(postmapCalls).toBe(1);
 		const after = await stat(fixture.aliasFilePath);
+		expect(after.ino).not.toBe(before.ino);
 		expect(after.mode & 0o7777).toBe(before.mode & 0o7777);
 		expect(after.uid).toBe(before.uid);
 		expect(after.gid).toBe(before.gid);
-		expect((await readdir(fixture.root)).filter((name) => name.endsWith('.bak'))).toHaveLength(1);
+		expect(
+			(await readdir(fixture.backupDirectoryPath)).filter((name) => name.endsWith('.bak'))
+		).toHaveLength(1);
+		expect(
+			(await readdir(fixture.root)).filter((name) => name.endsWith('.bak') || name.endsWith('.tmp'))
+		).toHaveLength(0);
+	});
+
+	test('rejects a symlink source during preflight', async () => {
+		const fixture = await createFixture('');
+		await rm(fixture.aliasFilePath);
+		await symlink(fixture.usersFilePath, fixture.aliasFilePath);
+		await expect(fixture.service().verifyMutationAccess()).rejects.toThrow(
+			/owner-only regular file/
+		);
+	});
+
+	test('rejects an unsafe writable source directory during preflight', async () => {
+		const fixture = await createFixture('');
+		await chmod(fixture.root, 0o777);
+		await expect(fixture.service().verifyMutationAccess()).rejects.toThrow(/directory is unsafe/);
+	});
+
+	test('serializes concurrent mutations', async () => {
+		const fixture = await createFixture('');
+		const service = fixture.service(async () => {
+			await Bun.sleep(10);
+		});
+		await Promise.all([
+			service.create({ address: 'one@zasoque.org', destination: 'jeonhangyeol@zasoque.org' }),
+			service.create({ address: 'two@zasoque.org', destination: 'another@zasoque.org' })
+		]);
+		const contents = await readFile(fixture.aliasFilePath, 'utf8');
+		expect(contents).toContain('one@zasoque.org');
+		expect(contents).toContain('two@zasoque.org');
 	});
 
 	test('updates a destination and deletes an alias', async () => {
@@ -112,13 +165,19 @@ async function createFixture(
 	temporaryDirectories.push(root);
 	const aliasFilePath = path.join(root, 'virtual_alias');
 	const usersFilePath = path.join(root, 'users');
-	await writeFile(aliasFilePath, aliases, { mode: 0o640 });
+	const backupDirectoryPath = path.join(root, 'backups');
+	await writeFile(aliasFilePath, aliases, { mode: 0o600 });
 	await writeFile(usersFilePath, users, { mode: 0o600 });
+	await mkdir(backupDirectoryPath, { mode: 0o700 });
 	return {
 		root,
 		aliasFilePath,
 		usersFilePath,
+		backupDirectoryPath,
 		service: (runPostmap: () => Promise<void> = async () => undefined) =>
-			new AliasService({ aliasFilePath, usersFilePath, postmapPath: '/unused' }, { runPostmap })
+			new AliasService(
+				{ aliasFilePath, usersFilePath, postmapPath: '/unused', backupDirectoryPath },
+				{ runPostmap }
+			)
 	};
 }

@@ -17,7 +17,7 @@ const creator = new AccountCreator(
 		usersFilePath: '/opt/homebrew/etc/dovecot/users',
 		vmailRoot: '/Users/Shared/vmail',
 		doveadmPath: '/opt/homebrew/bin/doveadm',
-		virtualAliasFilePath: '/etc/postfix/virtual_alias',
+		virtualAliasFilePath: '/usr/local/var/zasoque-mailadmin/postfix/virtual_alias',
 		uid: 500,
 		gid: 500
 	},
@@ -26,9 +26,10 @@ const creator = new AccountCreator(
 const reader = new AccountReader('/opt/homebrew/etc/dovecot/users', '/Users/Shared/vmail');
 const aliasService = new AliasService(
 	{
-		aliasFilePath: '/etc/postfix/virtual_alias',
+		aliasFilePath: '/usr/local/var/zasoque-mailadmin/postfix/virtual_alias',
 		usersFilePath: '/opt/homebrew/etc/dovecot/users',
-		postmapPath: '/usr/sbin/postmap'
+		postmapPath: '/usr/sbin/postmap',
+		backupDirectoryPath: '/var/backups/zasoque-mailadmin/postfix'
 	},
 	{ operationQueue }
 );
@@ -36,7 +37,7 @@ const deletedAccountService = new DeletedAccountService(
 	{
 		usersFilePath: '/opt/homebrew/etc/dovecot/users',
 		vmailRoot: '/Users/Shared/vmail',
-		virtualAliasFilePath: '/etc/postfix/virtual_alias',
+		virtualAliasFilePath: '/usr/local/var/zasoque-mailadmin/postfix/virtual_alias',
 		doveadmPath: '/opt/homebrew/bin/doveadm',
 		uid: 500,
 		gid: 500
@@ -53,6 +54,14 @@ const trashService = new TrashService(
 const statusService = new StatusService(reader, aliasService, deletedAccountService, trashService, {
 	postqueuePath: '/usr/sbin/postqueue'
 });
+
+try {
+	await aliasService.verifyMutationAccess();
+	console.info('Alias mutation preflight passed.');
+} catch (error) {
+	console.error('Alias mutation preflight failed.', safeErrorDetails(error));
+	process.exit(1);
+}
 
 const server = createServer(async (request, response) => {
 	setSecurityHeaders(response);
@@ -212,7 +221,7 @@ const server = createServer(async (request, response) => {
 			console.error(`Mail account operation failed (${error.code}).`);
 			return;
 		}
-		console.error('Unexpected mail account operation failure.');
+		console.error('Unexpected mail account operation failure.', safeErrorDetails(error));
 		sendJson(response, 500, {
 			error: { code: 'internal_error', message: 'Mail account operation failed.' }
 		});
@@ -330,6 +339,17 @@ function parsePort(value: string | undefined): number {
 	const port = Number(value);
 	if (port < 1 || port > 65535) throw new Error('MAIL_HELPER_PORT must be a valid TCP port.');
 	return port;
+}
+
+function safeErrorDetails(error: unknown): Record<string, string> {
+	if (!(error instanceof Error)) return { type: typeof error };
+	const details: Record<string, string> = {
+		name: error.name,
+		message: error.message.slice(0, 2048)
+	};
+	if ('code' in error && typeof error.code === 'string') details.code = error.code;
+	if ('syscall' in error && typeof error.syscall === 'string') details.syscall = error.syscall;
+	return details;
 }
 
 class RequestBodyError extends Error {
