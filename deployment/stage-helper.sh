@@ -76,6 +76,13 @@ else
 	echo "Alias source not created; run migrate-virtual-alias-map.sh before starting the helper."
 fi
 
+sender_source=/usr/local/var/zasoque-mailadmin/postfix/sender_login
+if [ -e "$sender_source" ]; then
+	echo "Preserved existing sender-login source: $sender_source"
+else
+	echo "Sender-login source not created; run rebuild-sender-login-map.sh before starting the helper."
+fi
+
 MAILADMIN_HELPER_STAGE_ROOT=$stage_root \
 	MAILADMIN_HELPER_BUN=$bun_target \
 	"$script_directory/verify-helper-deployment.sh"

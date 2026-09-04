@@ -72,6 +72,7 @@ export interface AccountCreatorDependencies {
 	chownTree?: (target: string, uid: number, gid: number) => Promise<void>;
 	moveMailbox?: (source: string, destination: string) => Promise<void>;
 	operationQueue?: OperationQueue;
+	synchronizeSenderLogin?: () => Promise<void>;
 }
 
 export class AccountCreator {
@@ -79,6 +80,7 @@ export class AccountCreator {
 	private readonly hashPassword: (password: string) => Promise<string>;
 	private readonly chownTree: (target: string, uid: number, gid: number) => Promise<void>;
 	private readonly moveMailbox: (source: string, destination: string) => Promise<void>;
+	private readonly synchronizeSenderLogin: () => Promise<void>;
 
 	constructor(
 		private readonly options: AccountCreatorOptions,
@@ -90,6 +92,7 @@ export class AccountCreator {
 		this.chownTree = dependencies.chownTree ?? chownDirectoryTree;
 		this.moveMailbox = dependencies.moveMailbox ?? rename;
 		this.operationQueue = dependencies.operationQueue ?? new OperationQueue();
+		this.synchronizeSenderLogin = dependencies.synchronizeSenderLogin ?? (async () => undefined);
 	}
 
 	create(input: unknown): Promise<CreateAccountResponse> {
@@ -148,6 +151,7 @@ export class AccountCreator {
 				mkdir(path.join(maildir, 'tmp'), { recursive: true, mode: 0o700 })
 			]);
 			await this.chownTree(mailHome, this.options.uid, this.options.gid);
+			await this.synchronizeSenderLogin();
 
 			return { address, maildir, created: true };
 		} catch (error) {
@@ -171,6 +175,13 @@ export class AccountCreator {
 						usersStat.uid,
 						usersStat.gid
 					);
+				} catch (rollbackError) {
+					rollbackFailures.push(rollbackError);
+				}
+			}
+			if (usersFileChanged) {
+				try {
+					await this.synchronizeSenderLogin();
 				} catch (rollbackError) {
 					rollbackFailures.push(rollbackError);
 				}
@@ -231,6 +242,7 @@ export class AccountCreator {
 		const archiveRoot = path.resolve(this.options.vmailRoot, '.deleted');
 		let originalUsersContents: string;
 		let usersFileChanged = false;
+		let archivedMailboxPath: string | null = null;
 
 		try {
 			originalUsersContents = await readFile(this.options.usersFilePath, 'utf8');
@@ -272,9 +284,20 @@ export class AccountCreator {
 				usersStat.gid
 			);
 
-			if (archivePath !== null) await this.moveMailbox(mailHome, archivePath);
+			if (archivePath !== null) {
+				await this.moveMailbox(mailHome, archivePath);
+				archivedMailboxPath = archivePath;
+			}
+			await this.synchronizeSenderLogin();
 			return { address, deleted: true, mailboxArchived: archivePath !== null };
 		} catch (error) {
+			if (archivedMailboxPath !== null) {
+				try {
+					await this.moveMailbox(archivedMailboxPath, mailHome);
+				} catch {
+					console.error('Mailbox archive rollback was incomplete.');
+				}
+			}
 			if (usersFileChanged) {
 				try {
 					const usersStat = await stat(this.options.usersFilePath);
@@ -287,6 +310,11 @@ export class AccountCreator {
 					);
 				} catch {
 					console.error('Account deletion rollback was incomplete. Manual recovery is required.');
+				}
+				try {
+					await this.synchronizeSenderLogin();
+				} catch {
+					console.error('Sender-login rollback was incomplete.');
 				}
 			}
 			if (error instanceof AccountCreatorError) throw error;

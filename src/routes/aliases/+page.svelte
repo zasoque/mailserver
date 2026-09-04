@@ -90,7 +90,10 @@
 		<div class="table-wrap">
 			<table>
 				<thead
-					><tr><th>Alias</th><th>Destination</th><th><span class="sr-only">Actions</span></th></tr
+					><tr
+						><th>Alias</th><th>Receive</th><th>Send as</th><th
+							><span class="sr-only">Actions</span></th
+						></tr
 					></thead
 				>
 				<tbody
@@ -104,7 +107,7 @@
 											>{/each}
 									</select>
 								{:else}<span>{alias.destination}</span>{/if}
-							</td><td class="actions">
+							</td><td><span>Allowed</span></td><td class="actions">
 								{#if editingAddress === alias.address}
 									<button
 										disabled={busyAddress === alias.address}

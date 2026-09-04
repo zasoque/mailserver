@@ -43,6 +43,7 @@ export interface DeletedAccountServiceOptions {
 
 export interface DeletedAccountServiceDependencies {
 	operationQueue?: OperationQueue;
+	synchronizeSenderLogin?: () => Promise<void>;
 	hashPassword?: (password: string) => Promise<string>;
 	chownTree?: (target: string, uid: number, gid: number) => Promise<void>;
 	moveMailbox?: (source: string, destination: string) => Promise<void>;
@@ -50,6 +51,7 @@ export interface DeletedAccountServiceDependencies {
 
 export class DeletedAccountService {
 	private readonly operationQueue: OperationQueue;
+	private readonly synchronizeSenderLogin: () => Promise<void>;
 	private readonly hashPassword: (password: string) => Promise<string>;
 	private readonly chownTree: (target: string, uid: number, gid: number) => Promise<void>;
 	private readonly moveMailbox: (source: string, destination: string) => Promise<void>;
@@ -59,6 +61,7 @@ export class DeletedAccountService {
 		dependencies: DeletedAccountServiceDependencies = {}
 	) {
 		this.operationQueue = dependencies.operationQueue ?? new OperationQueue();
+		this.synchronizeSenderLogin = dependencies.synchronizeSenderLogin ?? (async () => undefined);
 		this.hashPassword =
 			dependencies.hashPassword ??
 			((password) => hashPasswordWithDoveadm(options.doveadmPath, password));
@@ -138,6 +141,7 @@ export class DeletedAccountService {
 					usersMetadata.gid
 				);
 				await this.chownTree(destination, this.options.uid, this.options.gid);
+				await this.synchronizeSenderLogin();
 			} catch (error) {
 				let rollbackFailed = false;
 				if (usersWriteStarted) {
@@ -156,6 +160,13 @@ export class DeletedAccountService {
 				if (mailboxMoved) {
 					try {
 						await this.moveMailbox(destination, archivePath);
+					} catch {
+						rollbackFailed = true;
+					}
+				}
+				if (usersWriteStarted) {
+					try {
+						await this.synchronizeSenderLogin();
 					} catch {
 						rollbackFailed = true;
 					}

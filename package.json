@@ -15,7 +15,8 @@
 		"format": "prettier --write .",
 		"helper": "bun helper/server.ts",
 		"hash-admin-password": "bun scripts/hash-admin-password.ts",
-		"test": "bun test"
+		"test": "bun test",
+		"build:senderauth": "cd senderauth && GOCACHE=/tmp/zasoque-senderauth-go-cache go build -trimpath -o build/senderauth ."
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.5.7",

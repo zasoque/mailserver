@@ -28,7 +28,13 @@ describe('AliasService', () => {
 			'# aliases\nadmin@zasoque.org  jeonhangyeol@zasoque.org\n\n'
 		);
 		expect(await fixture.service().list()).toEqual({
-			aliases: [{ address: 'admin@zasoque.org', destination: 'jeonhangyeol@zasoque.org' }]
+			aliases: [
+				{
+					address: 'admin@zasoque.org',
+					destination: 'jeonhangyeol@zasoque.org',
+					sendAsAllowed: true
+				}
+			]
 		});
 	});
 

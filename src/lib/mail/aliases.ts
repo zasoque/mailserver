@@ -1,6 +1,7 @@
 export interface VirtualAlias {
 	address: string;
 	destination: string;
+	sendAsAllowed?: true;
 }
 
 export interface AliasesApiResponse {

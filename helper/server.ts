@@ -4,6 +4,7 @@ import { AccountReader } from './account-reader';
 import { AliasService } from './alias-service';
 import { DeletedAccountService } from './deleted-account-service';
 import { OperationQueue } from './operation-queue';
+import { SenderLoginService } from './sender-login-service';
 import { StatusService } from './status-service';
 import { TrashService } from './trash-service';
 
@@ -12,6 +13,14 @@ const PORT = parsePort(process.env.MAIL_HELPER_PORT);
 const MAX_REQUEST_BYTES = 16 * 1024;
 
 const operationQueue = new OperationQueue();
+const senderLoginService = new SenderLoginService({
+	usersFilePath: '/opt/homebrew/etc/dovecot/users',
+	aliasFilePath: '/usr/local/var/zasoque-mailadmin/postfix/virtual_alias',
+	senderLoginFilePath: '/usr/local/var/zasoque-mailadmin/postfix/sender_login',
+	backupDirectoryPath: '/var/backups/zasoque-mailadmin/postfix',
+	postmapPath: '/usr/sbin/postmap'
+});
+const synchronizeSenderLogin = () => senderLoginService.rebuildFromSources();
 const creator = new AccountCreator(
 	{
 		usersFilePath: '/opt/homebrew/etc/dovecot/users',
@@ -21,7 +30,7 @@ const creator = new AccountCreator(
 		uid: 500,
 		gid: 500
 	},
-	{ operationQueue }
+	{ operationQueue, synchronizeSenderLogin }
 );
 const reader = new AccountReader('/opt/homebrew/etc/dovecot/users', '/Users/Shared/vmail');
 const aliasService = new AliasService(
@@ -31,7 +40,7 @@ const aliasService = new AliasService(
 		postmapPath: '/usr/sbin/postmap',
 		backupDirectoryPath: '/var/backups/zasoque-mailadmin/postfix'
 	},
-	{ operationQueue }
+	{ operationQueue, synchronizeSenderLogin }
 );
 const deletedAccountService = new DeletedAccountService(
 	{
@@ -42,7 +51,7 @@ const deletedAccountService = new DeletedAccountService(
 		uid: 500,
 		gid: 500
 	},
-	{ operationQueue }
+	{ operationQueue, synchronizeSenderLogin }
 );
 const trashService = new TrashService(
 	{
@@ -57,6 +66,7 @@ const statusService = new StatusService(reader, aliasService, deletedAccountServ
 
 try {
 	await aliasService.verifyMutationAccess();
+	await senderLoginService.verifyMutationAccess();
 	console.info('Alias mutation preflight passed.');
 } catch (error) {
 	console.error('Alias mutation preflight failed.', safeErrorDetails(error));

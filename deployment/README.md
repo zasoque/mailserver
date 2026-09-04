@@ -302,7 +302,122 @@ The unauthenticated curl request must return `401`. Use the browser UI for mutat
 credentials and session cookies are not placed in shell history. After UI changes, repeat the
 lookup commands, send an external test message, and verify delivery in the selected mailbox.
 
-## 9. Dashboard and deleted accounts
+## 9. Alias sender identities
+
+The generated sender ownership map is derived exclusively from active Dovecot accounts and the
+canonical virtual-alias source:
+
+```text
+/usr/local/var/zasoque-mailadmin/postfix/sender_login       root:_postfix 0640
+/usr/local/var/zasoque-mailadmin/postfix/sender_login.db    root:_postfix 0640
+
+# sender address                 permitted SASL login
+alice@zasoque.org                alice@zasoque.org
+hello@zasoque.org                alice@zasoque.org
+```
+
+Every active account owns itself; each alias is owned by its active destination. Deleted accounts
+are absent. Account create/delete/restore and alias create/update/delete rebuild this generated map
+inside the same serialized operation. Source replacement is atomic and externally backed up; a
+postmap failure restores and rebuilds the old map. Rebuild it explicitly after staging:
+
+```sh
+sudo deployment/rebuild-sender-login-map.sh
+sudo /usr/sbin/postmap -q alice@zasoque.org \
+  hash:/usr/local/var/zasoque-mailadmin/postfix/sender_login
+sudo /usr/sbin/postmap -q hello@zasoque.org \
+  hash:/usr/local/var/zasoque-mailadmin/postfix/sender_login
+```
+
+The local Postfix has `_postfix` as `mail_owner`; the DB therefore uses the same restricted
+`root:_postfix 0640` policy as `virtual_alias.db`.
+
+### Submission enforcement and the visible From header
+
+Postfix `smtpd_sender_login_maps` maps an envelope sender to permitted SASL login names.
+`reject_authenticated_sender_login_mismatch` rejects authenticated clients that use an unlisted
+MAIL FROM or do not own the listed sender. Apply this only to the submission service, not the port
+25 inbound service. Add these overrides to the existing `submission` entry in `master.cf`:
+
+```text
+  -o smtpd_sender_login_maps=hash:/usr/local/var/zasoque-mailadmin/postfix/sender_login
+  -o smtpd_sender_restrictions=reject_authenticated_sender_login_mismatch
+```
+
+The repository's `senderauth` Go Milter performs the complementary RFC 5322 `From:` ownership check.
+It uses `github.com/emersion/go-milter` for protocol handling, Go `net/mail` for mailbox parsing,
+and the trusted `{auth_authen}` Postfix macro. It listens only on `127.0.0.1:10029`, runs as
+`_postfix`, never reads message bodies, and reloads the atomically replaced `sender_login` source at
+end-of-headers. Missing authentication, malformed/duplicate/multiple From, unavailable or unsafe
+maps, unknown senders, and ownership mismatch reject or tempfail closed. It requires ownership, not
+literal equality between MAIL FROM and From.
+
+Build, stage, verify, and install the daemon without changing Postfix:
+
+```sh
+bun run build:senderauth
+sudo deployment/stage-senderauth.sh "$PWD/senderauth/build/senderauth"
+sudo deployment/verify-senderauth-deployment.sh
+plutil -lint deployment/launchd/org.zasoque.senderauth.plist
+sudo install -o root -g wheel -m 0644 deployment/launchd/org.zasoque.senderauth.plist \
+  /Library/LaunchDaemons/org.zasoque.senderauth.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/org.zasoque.senderauth.plist
+```
+
+The existing `content_filter=dkimsign:127.0.0.1:10027` remains after Milter acceptance. Port 25 and
+DKIM reinjection port 10028 must not receive this Milter. Add these overrides only to `submission`:
+
+```text
+  -o smtpd_sender_login_maps=hash:/usr/local/var/zasoque-mailadmin/postfix/sender_login
+  -o smtpd_sender_restrictions=reject_authenticated_sender_login_mismatch
+  -o smtpd_milters=inet:127.0.0.1:10029
+  -o milter_protocol=6
+  -o milter_default_action=tempfail
+  -o milter_end_of_header_macros={auth_authen}
+```
+
+Then validate configuration and reload manually:
+
+```sh
+sudo /usr/sbin/postfix check
+sudo /usr/sbin/postfix reload
+/usr/sbin/postconf -M submission/inet
+```
+
+Rollback the Milter independently by removing the four Milter-related submission overrides. Remove
+the two sender-login overrides separately to roll back envelope enforcement. Then run `postfix
+check` and `postfix reload`.
+
+### SMTP tests
+
+Use a disposable account and `swaks` if installed. Supply passwords interactively or through a
+permission-restricted temporary mechanism; never place them in shell history:
+
+```sh
+swaks --server mail.zasoque.org:587 --tls --auth LOGIN \
+  --auth-user alice@zasoque.org --from hello@zasoque.org \
+  --header 'From: hello@zasoque.org' --to alice@zasoque.org
+
+swaks --server mail.zasoque.org:587 --tls --auth LOGIN \
+  --auth-user alice@zasoque.org --from admin@zasoque.org \
+  --header 'From: admin@zasoque.org' --to alice@zasoque.org
+```
+
+The first must be accepted when `hello` belongs to Alice. The second must return a 5xx sender-login
+mismatch when `admin` belongs to Bob. Also test an arbitrary local address and a foreign-domain
+sender; both must be rejected. Once the Milter is present, test a permitted MAIL FROM with a
+different visible From and require rejection before queueing.
+
+In Apple Mail, select Mail → Settings → Accounts → Account Information, open the Email Address menu,
+choose Edit Email Addresses, and add the aliases. Keep the outgoing server and authentication set
+to the real account. The aliases then appear in the compose window's From menu. Client-side setup
+does not replace server enforcement.
+
+For a delivered alias message, inspect Authentication-Results or the recipient provider's original
+message view and require SPF pass, DKIM pass with `d=zasoque.org`, and DMARC pass/alignment. Compare
+the envelope sender, visible From, and DKIM domain. The current DKIM content filter remains unchanged.
+
+## 10. Dashboard and deleted accounts
 
 The authenticated dashboard obtains read-only status from the loopback helper. It probes TCP
 listeners on `127.0.0.1` ports 25, 587, 993, and 10027 with a 500 ms timeout. Queue size comes from
@@ -329,7 +444,7 @@ The curl requests must return `401` without an authenticated session. Use a disp
 for restore and permanent-delete verification; never test those operations against a production
 mailbox or archive that must be retained.
 
-## 10. Active-account Trash
+## 11. Active-account Trash
 
 Trash management is separate from deleted-account archives. The verified Dovecot configuration has
 an inbox namespace with `/` as its separator and no `mailbox_special_use=\\Trash` declaration. The

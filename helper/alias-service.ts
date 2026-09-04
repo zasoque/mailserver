@@ -24,11 +24,13 @@ export interface AliasServiceOptions {
 export interface AliasServiceDependencies {
 	operationQueue?: OperationQueue;
 	runPostmap?: () => Promise<void>;
+	synchronizeSenderLogin?: () => Promise<void>;
 }
 
 export class AliasService {
 	private readonly operationQueue: OperationQueue;
 	private readonly runPostmap: () => Promise<void>;
+	private readonly synchronizeSenderLogin: () => Promise<void>;
 
 	constructor(
 		private readonly options: AliasServiceOptions,
@@ -37,6 +39,7 @@ export class AliasService {
 		this.operationQueue = dependencies.operationQueue ?? new OperationQueue();
 		this.runPostmap =
 			dependencies.runPostmap ?? (() => runPostmap(options.postmapPath, options.aliasFilePath));
+		this.synchronizeSenderLogin = dependencies.synchronizeSenderLogin ?? (async () => undefined);
 	}
 
 	async list(): Promise<AliasesApiResponse> {
@@ -44,7 +47,8 @@ export class AliasService {
 			const aliases = parseAliasSource(await this.readAliasFile()).map(
 				({ address, destination }) => ({
 					address,
-					destination
+					destination,
+					sendAsAllowed: true
 				})
 			);
 			aliases.sort((first, second) => first.address.localeCompare(second.address));
@@ -184,6 +188,7 @@ export class AliasService {
 			);
 			postmapStarted = true;
 			await this.runPostmap();
+			await this.synchronizeSenderLogin();
 		} catch (error) {
 			console.error(
 				`${postmapStarted ? 'postmap' : 'alias source update'} failure: ${safeErrorMessage(error)}`
@@ -197,6 +202,7 @@ export class AliasService {
 					metadata.gid
 				);
 				await this.runPostmap();
+				await this.synchronizeSenderLogin();
 			} catch (rollbackError) {
 				console.error(`alias rollback failure: ${safeErrorMessage(rollbackError)}`);
 			}
