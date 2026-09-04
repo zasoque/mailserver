@@ -27,7 +27,11 @@
 </svelte:head>
 
 <main>
-	<nav><a class="active" href="/accounts">Accounts</a><a href="/aliases">Aliases</a></nav>
+	<nav>
+		<a href="/dashboard">Dashboard</a><a class="active" href="/accounts">Accounts</a><a
+			href="/aliases">Aliases</a
+		><a href="/deleted">Deleted Accounts</a>
+	</nav>
 	<header>
 		<div>
 			<p class="eyebrow">Mail server</p>

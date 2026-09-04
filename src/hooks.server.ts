@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { json, redirect, type Handle } from '@sveltejs/kit';
 import { getAdminSession } from '$lib/server/auth';
+import { isProtectedAdminApi, isProtectedAdminPage } from '$lib/server/auth-routing';
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -18,18 +19,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
-	const protectedPage =
-		pathname === '/accounts' ||
-		pathname.startsWith('/accounts/') ||
-		pathname === '/aliases' ||
-		pathname.startsWith('/aliases/');
-	const protectedApi =
-		pathname === '/api/accounts' ||
-		pathname.startsWith('/api/accounts/') ||
-		pathname === '/api/aliases' ||
-		pathname.startsWith('/api/aliases/');
+	const protectedPage = isProtectedAdminPage(pathname);
+	const protectedApi = isProtectedAdminApi(pathname);
 	const logoutApi = pathname === '/api/auth/logout';
-	if (pathname === '/') redirect(303, event.locals.adminUsername ? '/accounts' : '/login');
+	if (pathname === '/') redirect(303, event.locals.adminUsername ? '/dashboard' : '/login');
 	if (!event.locals.adminUsername && (protectedPage || protectedApi || logoutApi)) {
 		if (protectedApi || logoutApi) {
 			return json(
@@ -40,6 +33,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 		redirect(303, `/login?next=${encodeURIComponent(pathname)}`);
 	}
 
-	if (event.locals.adminUsername && pathname === '/login') redirect(303, '/accounts');
+	if (event.locals.adminUsername && pathname === '/login') redirect(303, '/dashboard');
 	return resolve(event);
 };

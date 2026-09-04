@@ -40,7 +40,7 @@ export class AccountReader {
 	}
 }
 
-async function directorySize(directoryPath: string): Promise<number | null> {
+export async function directorySize(directoryPath: string): Promise<number | null> {
 	let total = 0;
 	try {
 		for (const entry of await readdir(directoryPath, { withFileTypes: true })) {

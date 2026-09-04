@@ -14,6 +14,14 @@ import type {
 	CreateAliasRequest,
 	UpdateAliasRequest
 } from '$lib/mail/aliases';
+import type {
+	DeletedAccountsResponse,
+	PermanentlyDeleteArchiveRequest,
+	PermanentlyDeleteArchiveResponse,
+	RestoreDeletedAccountRequest,
+	RestoreDeletedAccountResponse
+} from '$lib/mail/deleted';
+import type { MailServerStatus } from '$lib/mail/status';
 
 export class MailHelperClientError extends Error {
 	constructor(
@@ -74,6 +82,60 @@ export async function deleteAliasWithHelper(address: string): Promise<AliasMutat
 	return requireAliasMutationResponse(
 		await requestHelper(`/aliases/${encodeURIComponent(address)}`, 'DELETE')
 	);
+}
+
+export async function getStatusWithHelper(): Promise<MailServerStatus> {
+	const body = await requestHelper('/status', 'GET');
+	if (!isMailServerStatus(body)) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The helper returned invalid status data.'
+		);
+	}
+	return body;
+}
+
+export async function listDeletedAccountsWithHelper(): Promise<DeletedAccountsResponse> {
+	const body = await requestHelper('/deleted', 'GET');
+	if (!isDeletedAccountsResponse(body)) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The helper returned invalid archive data.'
+		);
+	}
+	return body;
+}
+
+export async function restoreDeletedAccountWithHelper(
+	id: string,
+	request: RestoreDeletedAccountRequest
+): Promise<RestoreDeletedAccountResponse> {
+	const body = await requestHelper(`/deleted/${encodeURIComponent(id)}/restore`, 'POST', request);
+	if (!isRestoreResponse(body)) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The helper returned invalid restore data.'
+		);
+	}
+	return body;
+}
+
+export async function permanentlyDeleteArchiveWithHelper(
+	id: string,
+	request: PermanentlyDeleteArchiveRequest
+): Promise<PermanentlyDeleteArchiveResponse> {
+	const body = await requestHelper(`/deleted/${encodeURIComponent(id)}`, 'DELETE', request);
+	if (!isPermanentDeleteResponse(body)) {
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The helper returned invalid deletion data.'
+		);
+	}
+	return body;
 }
 
 export async function createAccountWithHelper(
@@ -229,6 +291,15 @@ function readHelperError(value: unknown): AccountsApiError['error'] {
 		if (value.error.code === 'postmap_failed') {
 			return { code: 'postmap_failed', message: value.error.message };
 		}
+		if (value.error.code === 'archive_not_found') {
+			return { code: 'archive_not_found', message: value.error.message };
+		}
+		if (value.error.code === 'archive_conflict') {
+			return { code: 'archive_conflict', message: value.error.message };
+		}
+		if (value.error.code === 'confirmation_mismatch') {
+			return { code: 'confirmation_mismatch', message: value.error.message };
+		}
 		if (value.error.code === 'filesystem_error') {
 			return { code: 'repository_error', message: 'The privileged mail helper operation failed.' };
 		}
@@ -323,5 +394,58 @@ function isCreateAccountResponse(value: unknown): value is CreateAccountResponse
 		typeof value.address === 'string' &&
 		typeof value.maildir === 'string' &&
 		value.created === true
+	);
+}
+
+function isMailServerStatus(value: unknown): value is MailServerStatus {
+	if (typeof value !== 'object' || value === null || !('services' in value) || !('queue' in value))
+		return false;
+	const record = value as Record<string, unknown>;
+	return ['accounts', 'aliases', 'deletedAccounts', 'mailStorageBytes', 'deletedMailBytes'].every(
+		(key) => typeof record[key] === 'number' || record[key] === null
+	);
+}
+
+function isDeletedAccountsResponse(value: unknown): value is DeletedAccountsResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'archives' in value &&
+		Array.isArray(value.archives) &&
+		value.archives.every(
+			(archive) =>
+				typeof archive === 'object' &&
+				archive !== null &&
+				typeof archive.id === 'string' &&
+				typeof archive.address === 'string' &&
+				typeof archive.deletedAt === 'string' &&
+				(typeof archive.usageBytes === 'number' || archive.usageBytes === null)
+		)
+	);
+}
+
+function isRestoreResponse(value: unknown): value is RestoreDeletedAccountResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'id' in value &&
+		'address' in value &&
+		'restored' in value &&
+		typeof value.id === 'string' &&
+		typeof value.address === 'string' &&
+		value.restored === true
+	);
+}
+
+function isPermanentDeleteResponse(value: unknown): value is PermanentlyDeleteArchiveResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'id' in value &&
+		'address' in value &&
+		'permanentlyDeleted' in value &&
+		typeof value.id === 'string' &&
+		typeof value.address === 'string' &&
+		value.permanentlyDeleted === true
 	);
 }

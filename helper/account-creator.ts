@@ -40,6 +40,9 @@ export type AccountCreatorErrorCode =
 	| 'destination_not_found'
 	| 'protected_alias'
 	| 'postmap_failed'
+	| 'archive_not_found'
+	| 'archive_conflict'
+	| 'confirmation_mismatch'
 	| 'doveadm_failed'
 	| 'filesystem_error';
 
@@ -350,7 +353,10 @@ export function validateChangePasswordRequest(input: unknown): ChangePasswordReq
 	return { password, confirmPassword };
 }
 
-async function hashPasswordWithDoveadm(doveadmPath: string, password: string): Promise<string> {
+export async function hashPasswordWithDoveadm(
+	doveadmPath: string,
+	password: string
+): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(doveadmPath, ['pw', '-s', 'BLF-CRYPT'], {
 			stdio: ['pipe', 'pipe', 'pipe'],
@@ -409,7 +415,7 @@ function containsAddress(contents: string, address: string): boolean {
 		.some((line) => line.slice(0, line.indexOf(':')).trim() === address);
 }
 
-function appendUsersEntry(contents: string, address: string, hash: string): string {
+export function appendUsersEntry(contents: string, address: string, hash: string): string {
 	const separator = contents === '' || contents.endsWith('\n') ? '' : '\n';
 	return `${contents}${separator}${address}:${hash}\n`;
 }
@@ -559,7 +565,7 @@ export async function atomicWrite(
 	}
 }
 
-async function chownDirectoryTree(target: string, uid: number, gid: number): Promise<void> {
+export async function chownDirectoryTree(target: string, uid: number, gid: number): Promise<void> {
 	const targetStat = await lstat(target);
 	if (targetStat.isSymbolicLink()) throw new Error('Refused to chown a symbolic link.');
 	if (targetStat.isDirectory()) {

@@ -22,7 +22,7 @@
 				return;
 			}
 			password = '';
-			await goto('/accounts', { invalidateAll: true });
+			await goto('/dashboard', { invalidateAll: true });
 		} catch {
 			errorMessage = 'The server could not be reached. Please try again.';
 		} finally {

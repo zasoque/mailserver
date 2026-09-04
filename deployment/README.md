@@ -86,8 +86,8 @@ sudo install -d -o root -g wheel -m 0755 /usr/local/libexec/zasoque-mailadmin/bi
 sudo install -d -o root -g wheel -m 0755 /usr/local/libexec/zasoque-mailadmin/app/helper
 sudo install -d -o root -g wheel -m 0755 /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail
 sudo install -o root -g wheel -m 0755 /Users/jeonhangyeol/.bun/bin/bun /usr/local/libexec/zasoque-mailadmin/bin/bun
-sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
-sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
+sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/deleted-account-service.ts helper/status-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
+sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/deleted.ts src/lib/mail/status.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
 sudo install -d -o root -g wheel -m 0755 /var/log/zasoque-mailadmin
 ```
 
@@ -158,25 +158,16 @@ the password or hash. Restarting the web service invalidates all sessions.
 
 ## 6. Lock down the Dovecot users file
 
-The web process no longer reads this file; only Dovecot and the root helper need access. For the
-current root-managed Dovecot setup, use:
+The web process no longer reads this file; only Dovecot and the root helper need access. Preserve
+the verified production owner and mode:
 
 ```sh
-sudo chown root:wheel /opt/homebrew/etc/dovecot/users
-sudo chmod 0600 /opt/homebrew/etc/dovecot/users
+sudo chown root:mail /opt/homebrew/etc/dovecot/users
+sudo chmod 0640 /opt/homebrew/etc/dovecot/users
 sudo doveadm auth test jeonhangyeol@zasoque.org
 ```
 
-If Dovecot authentication fails after tightening permissions, its auth worker is configured to run
-as a non-root identity. In that case, use a dedicated Dovecot group rather than world-readable mode:
-
-```sh
-sudo chown root:dovecot /opt/homebrew/etc/dovecot/users
-sudo chmod 0640 /opt/homebrew/etc/dovecot/users
-```
-
-Confirm the actual local Dovecot group name before using the second form. Never restore `0644` or
-another world-readable mode.
+Never change it to a world-readable mode.
 
 ## 7. Deploy authentication updates
 
@@ -245,8 +236,8 @@ bun install --frozen-lockfile
 bun run check
 bun test
 bun run build
-sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
-sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
+sudo install -o root -g wheel -m 0644 helper/server.ts helper/account-creator.ts helper/account-reader.ts helper/alias-service.ts helper/deleted-account-service.ts helper/status-service.ts helper/operation-queue.ts /usr/local/libexec/zasoque-mailadmin/app/helper/
+sudo install -o root -g wheel -m 0644 src/lib/mail/accounts.ts src/lib/mail/aliases.ts src/lib/mail/deleted.ts src/lib/mail/status.ts src/lib/mail/config.ts /usr/local/libexec/zasoque-mailadmin/app/src/lib/mail/
 sudo launchctl kickstart -k system/org.zasoque.mailadmin.helper
 sudo launchctl kickstart -k system/org.zasoque.mailadmin.web
 ```
@@ -262,3 +253,30 @@ curl -i https://admin.mail.zasoque.org/api/aliases
 The unauthenticated curl request must return `401`. Use the browser UI for mutations so administrator
 credentials and session cookies are not placed in shell history. After UI changes, repeat the
 lookup commands, send an external test message, and verify delivery in the selected mailbox.
+
+## 9. Dashboard and deleted accounts
+
+The authenticated dashboard obtains read-only status from the loopback helper. It probes TCP
+listeners on `127.0.0.1` ports 25, 587, 993, and 10027 with a 500 ms timeout. Queue size comes from
+the machine-readable `/usr/sbin/postqueue -j` output; queue contents are never returned. Account,
+alias, archive, and storage failures are isolated so one unavailable metric does not fail the whole
+dashboard.
+
+Deleted mailboxes retain the existing
+`/Users/Shared/vmail/.deleted/YYYYMMDDTHHMMSSmmm-address` convention. Restore requires a new
+password, rejects account/mailbox/alias conflicts, and rolls the users file and mailbox move back
+on failure. Permanent deletion accepts only a validated archive identifier, requires the exact
+address confirmation, rejects symlink archive roots and archive entries, and recursively unlinks
+symlinks without following them.
+
+After deployment, verify read-only behavior first:
+
+```sh
+curl -i http://127.0.0.1:8788/api/status
+curl -i http://127.0.0.1:8788/api/deleted
+sudo /usr/sbin/postqueue -j
+```
+
+The curl requests must return `401` without an authenticated session. Use a disposable test account
+for restore and permanent-delete verification; never test those operations against a production
+mailbox or archive that must be retained.

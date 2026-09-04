@@ -67,7 +67,12 @@
 
 <svelte:head><title>Aliases</title></svelte:head>
 <main>
-	<nav><a href="/accounts">Accounts</a><a class="active" href="/aliases">Aliases</a></nav>
+	<nav>
+		<a href="/dashboard">Dashboard</a><a href="/accounts">Accounts</a><a
+			class="active"
+			href="/aliases">Aliases</a
+		><a href="/deleted">Deleted Accounts</a>
+	</nav>
 	<header>
 		<div>
 			<p class="eyebrow">Mail server</p>

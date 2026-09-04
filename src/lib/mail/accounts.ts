@@ -25,7 +25,10 @@ export interface AccountsApiError {
 			| 'destination_not_found'
 			| 'protected_alias'
 			| 'alias_in_use'
-			| 'postmap_failed';
+			| 'postmap_failed'
+			| 'archive_not_found'
+			| 'archive_conflict'
+			| 'confirmation_mismatch';
 		message: string;
 	};
 }

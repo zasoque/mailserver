@@ -2,7 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { AccountCreator, AccountCreatorError } from './account-creator';
 import { AccountReader } from './account-reader';
 import { AliasService } from './alias-service';
+import { DeletedAccountService } from './deleted-account-service';
 import { OperationQueue } from './operation-queue';
+import { StatusService } from './status-service';
 
 const HOST = '127.0.0.1';
 const PORT = parsePort(process.env.MAIL_HELPER_PORT);
@@ -29,6 +31,20 @@ const aliasService = new AliasService(
 	},
 	{ operationQueue }
 );
+const deletedAccountService = new DeletedAccountService(
+	{
+		usersFilePath: '/opt/homebrew/etc/dovecot/users',
+		vmailRoot: '/Users/Shared/vmail',
+		virtualAliasFilePath: '/etc/postfix/virtual_alias',
+		doveadmPath: '/opt/homebrew/bin/doveadm',
+		uid: 500,
+		gid: 500
+	},
+	{ operationQueue }
+);
+const statusService = new StatusService(reader, aliasService, deletedAccountService, {
+	postqueuePath: '/usr/sbin/postqueue'
+});
 
 const server = createServer(async (request, response) => {
 	setSecurityHeaders(response);
@@ -45,18 +61,24 @@ const server = createServer(async (request, response) => {
 	const passwordAddress = matchPasswordChangeRoute(request);
 	const deleteAddress = matchAccountDeleteRoute(request);
 	const aliasAddress = matchAliasRoute(request);
+	const deletedRoute = matchDeletedRoute(request);
 	const isListRequest = request.method === 'GET' && request.url === '/accounts';
 	const isCreateRequest = request.method === 'POST' && request.url === '/accounts';
 	const isAliasListRequest = request.method === 'GET' && request.url === '/aliases';
 	const isAliasCreateRequest = request.method === 'POST' && request.url === '/aliases';
+	const isStatusRequest = request.method === 'GET' && request.url === '/status';
+	const isDeletedListRequest = request.method === 'GET' && request.url === '/deleted';
 	if (
 		!isListRequest &&
 		!isCreateRequest &&
 		!isAliasListRequest &&
 		!isAliasCreateRequest &&
+		!isStatusRequest &&
+		!isDeletedListRequest &&
 		passwordAddress === null &&
 		deleteAddress === null &&
-		aliasAddress === null
+		aliasAddress === null &&
+		deletedRoute === null
 	) {
 		sendJson(response, 404, { error: { code: 'not_found', message: 'Not found.' } });
 		return;
@@ -64,6 +86,8 @@ const server = createServer(async (request, response) => {
 	if (
 		!isListRequest &&
 		!isAliasListRequest &&
+		!isStatusRequest &&
+		!isDeletedListRequest &&
 		deleteAddress === null &&
 		!(request.method === 'DELETE' && aliasAddress !== null) &&
 		!request.headers['content-type']?.toLowerCase().startsWith('application/json')
@@ -75,6 +99,26 @@ const server = createServer(async (request, response) => {
 	try {
 		if (isListRequest) {
 			sendJson(response, 200, await reader.list());
+		} else if (isStatusRequest) {
+			sendJson(response, 200, await statusService.get());
+		} else if (isDeletedListRequest) {
+			sendJson(response, 200, await deletedAccountService.list());
+		} else if (deletedRoute !== null && deletedRoute.action === 'restore') {
+			const result = await deletedAccountService.restore(
+				deletedRoute.id,
+				await readJsonBody(request)
+			);
+			sendJson(response, 200, result);
+			console.info(`Restored mail account ${result.address} from archive ${result.id}`);
+		} else if (deletedRoute !== null && deletedRoute.action === 'delete') {
+			const result = await deletedAccountService.permanentlyDelete(
+				deletedRoute.id,
+				await readJsonBody(request)
+			);
+			sendJson(response, 200, result);
+			console.info(
+				`Permanently deleted archived mailbox ${result.address} (${result.usageBytes ?? 'unknown'} bytes)`
+			);
 		} else if (isAliasListRequest) {
 			sendJson(response, 200, await aliasService.list());
 		} else if (isAliasCreateRequest) {
@@ -119,19 +163,22 @@ const server = createServer(async (request, response) => {
 					? 409
 					: error.code === 'account_not_found'
 						? 404
-						: error.code === 'alias_not_found' || error.code === 'destination_not_found'
+						: error.code === 'archive_not_found'
 							? 404
-							: error.code === 'alias_exists' ||
-								  error.code === 'account_address_conflict' ||
-								  error.code === 'alias_in_use'
-								? 409
-								: error.code === 'protected_account'
-									? 403
-									: error.code === 'protected_alias'
+							: error.code === 'alias_not_found' || error.code === 'destination_not_found'
+								? 404
+								: error.code === 'alias_exists' ||
+									  error.code === 'account_address_conflict' ||
+									  error.code === 'alias_in_use' ||
+									  error.code === 'archive_conflict'
+									? 409
+									: error.code === 'protected_account'
 										? 403
-										: error.code === 'invalid_request'
-											? 400
-											: 500;
+										: error.code === 'protected_alias'
+											? 403
+											: error.code === 'invalid_request' || error.code === 'confirmation_mismatch'
+												? 400
+												: 500;
 			if (error.code === 'protected_account') {
 				sendJson(response, status, { error: error.message });
 			} else {
@@ -194,6 +241,25 @@ function matchAliasRoute(request: IncomingMessage): string | null {
 		return decodeURIComponent(match[1]);
 	} catch {
 		return '';
+	}
+}
+
+function matchDeletedRoute(
+	request: IncomingMessage
+): { id: string; action: 'restore' | 'delete' } | null {
+	if (request.url === undefined) return null;
+	const pathname = new URL(request.url, 'http://localhost').pathname;
+	const restore = request.method === 'POST' ? /^\/deleted\/([^/]+)\/restore$/.exec(pathname) : null;
+	const deletion = request.method === 'DELETE' ? /^\/deleted\/([^/]+)$/.exec(pathname) : null;
+	const match = restore ?? deletion;
+	if (!match) return null;
+	try {
+		return {
+			id: decodeURIComponent(match[1]),
+			action: restore ? 'restore' : 'delete'
+		};
+	} catch {
+		return { id: '', action: restore ? 'restore' : 'delete' };
 	}
 }
 
