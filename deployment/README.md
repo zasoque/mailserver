@@ -25,13 +25,17 @@ and `PORT=8788`. It requires the authentication settings described below.
 
 ## Administrator authentication secrets
 
-Generate a bcrypt hash without putting the plaintext password in an argument. At the prompt, type
-the password, press Return, and then clear the temporary shell variable:
+Generate a bcrypt hash without putting the plaintext password in an argument. The command prompts
+twice with terminal echo disabled and prints only the resulting cost-12 bcrypt hash to stdout:
 
 ```sh
-read -s MAIL_ADMIN_PLAIN_PASSWORD
-printf '%s' "$MAIL_ADMIN_PLAIN_PASSWORD" | bun run hash-admin-password
-unset MAIL_ADMIN_PLAIN_PASSWORD
+bun run hash-admin-password
+```
+
+```text
+Password:
+Confirm password:
+$2b$12$...
 ```
 
 Generate an independent session secret:
