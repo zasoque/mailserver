@@ -21,6 +21,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const protectedPage = pathname === '/accounts' || pathname.startsWith('/accounts/');
 	const protectedApi = pathname === '/api/accounts' || pathname.startsWith('/api/accounts/');
 	const logoutApi = pathname === '/api/auth/logout';
+	if (pathname === '/') redirect(303, event.locals.adminUsername ? '/accounts' : '/login');
 	if (!event.locals.adminUsername && (protectedPage || protectedApi || logoutApi)) {
 		if (protectedApi || logoutApi) {
 			return json(

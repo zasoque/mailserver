@@ -173,3 +173,25 @@ sudo chmod 0640 /opt/homebrew/etc/dovecot/users
 
 Confirm the actual local Dovecot group name before using the second form. Never restore `0644` or
 another world-readable mode.
+
+## 7. Deploy authentication updates
+
+Authentication changes affect only the web build and web service. They do not require Dovecot,
+Postfix, or helper configuration changes:
+
+```sh
+cd /Users/jeonhangyeol/Programming/mailserver
+bun install --frozen-lockfile
+bun run check
+bun test
+bun run build
+plutil -lint deployment/launchd/org.zasoque.mailadmin.web.plist
+sudo launchctl bootout system/org.zasoque.mailadmin.web
+sudo install -o root -g wheel -m 0644 deployment/launchd/org.zasoque.mailadmin.web.plist /Library/LaunchDaemons/org.zasoque.mailadmin.web.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/org.zasoque.mailadmin.web.plist
+```
+
+The files that must be present for the updated web service are the new `build/` output,
+`deployment/start-web.mjs`, installed runtime dependencies (including `bcryptjs`), and the external
+`web.env` secret config. Restarting the service intentionally invalidates existing in-memory admin
+sessions.

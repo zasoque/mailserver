@@ -58,8 +58,8 @@ function getAuthConfig(): AuthConfig {
 	if (!username || !/^[A-Za-z0-9._-]{1,64}$/.test(username)) {
 		throw new Error('MAIL_ADMIN_USERNAME is missing or invalid.');
 	}
-	if (!passwordHash || !/^\$2[aby]\$\d{2}\$/.test(passwordHash)) {
-		throw new Error('MAIL_ADMIN_PASSWORD_HASH must be a bcrypt hash.');
+	if (!passwordHash || !/^\$2[aby]\$(?:1[2-9]|2\d|3[01])\$/.test(passwordHash)) {
+		throw new Error('MAIL_ADMIN_PASSWORD_HASH must be a bcrypt hash with cost 12 or greater.');
 	}
 	if (!sessionSecret || Buffer.byteLength(sessionSecret, 'utf8') < 32) {
 		throw new Error('MAIL_ADMIN_SESSION_SECRET must contain at least 32 bytes.');
