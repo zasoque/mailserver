@@ -1,2 +1,8 @@
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a> to read the documentation</p>
+<svelte:head>
+	<title>Mail server administration</title>
+</svelte:head>
+
+<main>
+	<h1>Mail server administration</h1>
+	<p><a href="/accounts">Manage mail accounts</a></p>
+</main>
