@@ -14,6 +14,7 @@
 		"lint": "prettier --check .",
 		"format": "prettier --write .",
 		"helper": "bun helper/server.ts",
+		"hash-admin-password": "bun scripts/hash-admin-password.ts",
 		"test": "bun test"
 	},
 	"devDependencies": {
@@ -28,5 +29,8 @@
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.0.16"
+	},
+	"dependencies": {
+		"bcryptjs": "^3.0.3"
 	}
 }

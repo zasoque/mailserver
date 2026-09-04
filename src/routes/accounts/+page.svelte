@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+
 	let { data } = $props();
 
 	const bytes = new Intl.NumberFormat('en', {
@@ -13,6 +15,11 @@
 		if (value === 0) return '0 MB';
 		return bytes.format(value / 1_000_000);
 	}
+
+	async function logout() {
+		const response = await fetch('/api/auth/logout', { method: 'POST' });
+		if (response.ok) await goto('/login', { invalidateAll: true });
+	}
 </script>
 
 <svelte:head>
@@ -25,7 +32,10 @@
 			<p class="eyebrow">Mail server</p>
 			<h1>Accounts</h1>
 		</div>
-		<a class="button" href="/accounts/new">New account</a>
+		<div class="actions">
+			<button class="logout" type="button" onclick={logout}>Log out</button>
+			<a class="button" href="/accounts/new">New account</a>
+		</div>
 	</header>
 
 	{#if data.deletedAccount}
@@ -119,6 +129,19 @@
 		color: white;
 		font-weight: 650;
 		text-decoration: none;
+	}
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.logout {
+		padding: 10px 12px;
+		border: 0;
+		background: transparent;
+		color: #686864;
+		font: inherit;
+		cursor: pointer;
 	}
 	.table-wrap,
 	.error,

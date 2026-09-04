@@ -18,11 +18,48 @@ bun install --frozen-lockfile
 bun run check
 bun test
 bun run build
-bun run start
 ```
 
 `bun run start` launches only the adapter-node output in `build/`, with defaults `HOST=127.0.0.1`
-and `PORT=8788`. Stop the foreground verification with Control-C.
+and `PORT=8788`. It requires the authentication settings described below.
+
+## Administrator authentication secrets
+
+Generate a bcrypt hash without putting the plaintext password in an argument. At the prompt, type
+the password, press Return, and then clear the temporary shell variable:
+
+```sh
+read -s MAIL_ADMIN_PLAIN_PASSWORD
+printf '%s' "$MAIL_ADMIN_PLAIN_PASSWORD" | bun run hash-admin-password
+unset MAIL_ADMIN_PLAIN_PASSWORD
+```
+
+Generate an independent session secret:
+
+```sh
+openssl rand -base64 48
+```
+
+Create the service-user-owned config outside the repository using `deployment/web.env.example` as
+the template. Paste only the generated hash and secret, never the plaintext password:
+
+```sh
+install -d -m 0700 /Users/jeonhangyeol/.config/zasoque-mailadmin
+install -m 0600 deployment/web.env.example /Users/jeonhangyeol/.config/zasoque-mailadmin/web.env
+chmod 0600 /Users/jeonhangyeol/.config/zasoque-mailadmin/web.env
+```
+
+Edit `/Users/jeonhangyeol/.config/zasoque-mailadmin/web.env`, then verify it is owned by
+`jeonhangyeol` and has mode `0600`. The launcher refuses group/world-readable files. The plist
+contains only the config path; it contains no username, password hash, or session secret.
+
+For a foreground production check using the same config:
+
+```sh
+MAIL_ADMIN_CONFIG_FILE=/Users/jeonhangyeol/.config/zasoque-mailadmin/web.env \
+ORIGIN=http://127.0.0.1:8788 \
+bun run start
+```
 
 The current executable paths used to create the plist files were:
 
@@ -107,8 +144,13 @@ Both listeners must show `127.0.0.1`, never `*`, `0.0.0.0`, or a LAN address. Af
 repeat the `launchctl print`, `curl`, and `lsof` checks before relying on the service.
 
 To access the UI remotely, place an authenticated reverse proxy or SSH tunnel in front of the web
-loopback port. Do not change `HOST` to expose the Node server. When using a reverse proxy hostname,
-update the web plist `ORIGIN` to its external HTTPS origin while leaving `HOST=127.0.0.1`.
+loopback port. Do not change `HOST` to expose the Node server. The production plist sets
+`ORIGIN=https://admin.mail.zasoque.org` for Caddy while leaving `HOST=127.0.0.1`; this is also the
+only accepted browser Origin for state-changing API requests.
+
+After login, the server issues an eight-hour `HttpOnly; Secure; SameSite=Lax; Path=/` cookie. Session
+records are held only in web-process memory and contain the administrator username and expiry, not
+the password or hash. Restarting the web service invalidates all sessions.
 
 ## 6. Lock down the Dovecot users file
 
