@@ -1,8 +1,11 @@
 import { env } from '$env/dynamic/private';
 import type {
 	AccountsApiError,
+	ChangePasswordRequest,
+	ChangePasswordResponse,
 	CreateAccountRequest,
-	CreateAccountResponse
+	CreateAccountResponse,
+	DeleteAccountResponse
 } from '$lib/mail/accounts';
 
 export class MailHelperClientError extends Error {
@@ -53,6 +56,63 @@ export async function createAccountWithHelper(
 	return body;
 }
 
+export async function changePasswordWithHelper(
+	address: string,
+	request: ChangePasswordRequest
+): Promise<ChangePasswordResponse> {
+	const body = await requestHelper(
+		`/accounts/${encodeURIComponent(address)}/password`,
+		'PATCH',
+		request
+	);
+	if (!isChangePasswordResponse(body)) {
+		throw new MailHelperClientError(
+			502,
+			'creation_failed',
+			'The mail helper returned an invalid response.'
+		);
+	}
+	return body;
+}
+
+export async function deleteAccountWithHelper(address: string): Promise<DeleteAccountResponse> {
+	const body = await requestHelper(`/accounts/${encodeURIComponent(address)}`, 'DELETE');
+	if (!isDeleteAccountResponse(body)) {
+		throw new MailHelperClientError(
+			502,
+			'creation_failed',
+			'The mail helper returned an invalid response.'
+		);
+	}
+	return body;
+}
+
+async function requestHelper(path: string, method: string, request?: unknown): Promise<unknown> {
+	const port = helperPort(env.MAIL_HELPER_PORT);
+	let response: Response;
+	try {
+		const init: RequestInit = { method, signal: AbortSignal.timeout(15_000) };
+		if (request !== undefined) {
+			init.headers = { 'content-type': 'application/json' };
+			init.body = JSON.stringify(request);
+		}
+		response = await fetch(`http://127.0.0.1:${port}${path}`, init);
+	} catch (error) {
+		throw new MailHelperClientError(
+			503,
+			'helper_unavailable',
+			'The privileged mail helper is unavailable.',
+			{ cause: error }
+		);
+	}
+	const body: unknown = await response.json().catch(() => null);
+	if (!response.ok) {
+		const helperError = readHelperError(body);
+		throw new MailHelperClientError(response.status, helperError.code, helperError.message);
+	}
+	return body;
+}
+
 function helperPort(value: string | undefined): number {
 	if (value === undefined) return 8787;
 	if (!/^\d{1,5}$/.test(value)) return 8787;
@@ -78,11 +138,41 @@ function readHelperError(value: unknown): AccountsApiError['error'] {
 		if (value.error.code === 'invalid_request') {
 			return { code: 'invalid_request', message: value.error.message };
 		}
+		if (value.error.code === 'account_not_found') {
+			return { code: 'account_not_found', message: value.error.message };
+		}
+		if (value.error.code === 'protected_account') {
+			return { code: 'protected_account', message: value.error.message };
+		}
 	}
 	return {
 		code: 'creation_failed',
 		message: 'The privileged mail helper could not create the account.'
 	};
+}
+
+function isChangePasswordResponse(value: unknown): value is ChangePasswordResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'address' in value &&
+		'passwordChanged' in value &&
+		typeof value.address === 'string' &&
+		value.passwordChanged === true
+	);
+}
+
+function isDeleteAccountResponse(value: unknown): value is DeleteAccountResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'address' in value &&
+		'deleted' in value &&
+		'mailboxArchived' in value &&
+		typeof value.address === 'string' &&
+		value.deleted === true &&
+		typeof value.mailboxArchived === 'boolean'
+	);
 }
 
 function isCreateAccountResponse(value: unknown): value is CreateAccountResponse {

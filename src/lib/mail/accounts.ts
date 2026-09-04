@@ -15,6 +15,8 @@ export interface AccountsApiError {
 			| 'repository_error'
 			| 'invalid_request'
 			| 'account_exists'
+			| 'account_not_found'
+			| 'protected_account'
 			| 'helper_unavailable'
 			| 'creation_failed';
 		message: string;
@@ -31,4 +33,20 @@ export interface CreateAccountResponse {
 	address: string;
 	maildir: string;
 	created: true;
+}
+
+export interface ChangePasswordRequest {
+	password: string;
+	confirmPassword: string;
+}
+
+export interface ChangePasswordResponse {
+	address: string;
+	passwordChanged: true;
+}
+
+export interface DeleteAccountResponse {
+	address: string;
+	deleted: true;
+	mailboxArchived: boolean;
 }

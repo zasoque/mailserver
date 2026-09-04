@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { AccountCreator, AccountCreatorError } from './account-creator';
@@ -72,6 +72,66 @@ describe('AccountCreator', () => {
 		expect(
 			await readdir(path.join(fixture.vmailRoot, 'zasoque.org')).catch(() => [])
 		).not.toContain('toku');
+	});
+
+	test('changes only the selected account password hash and creates a backup', async () => {
+		const initial =
+			'first@zasoque.org:{CRYPT}$2y$first:extra\r\n' +
+			'toku@zasoque.org:{CRYPT}$2y$old:uid=500\r\n' +
+			'last@zasoque.org:{CRYPT}$2y$last\r\n';
+		const fixture = await createFixture(initial);
+		const beforeStat = await stat(fixture.usersFilePath);
+
+		const result = await fixture.creator().changePassword('toku@zasoque.org', {
+			password: 'new-secret',
+			confirmPassword: 'new-secret'
+		});
+
+		expect(result).toEqual({ address: 'toku@zasoque.org', passwordChanged: true });
+		expect(await readFile(fixture.usersFilePath, 'utf8')).toBe(
+			initial.replace('{CRYPT}$2y$old', '{BLF-CRYPT}$2y$test-hash')
+		);
+		const afterStat = await stat(fixture.usersFilePath);
+		expect(afterStat.mode & 0o7777).toBe(beforeStat.mode & 0o7777);
+		expect(afterStat.uid).toBe(beforeStat.uid);
+		expect(afterStat.gid).toBe(beforeStat.gid);
+		expect((await readdir(fixture.root)).filter((name) => name.endsWith('.bak'))).toHaveLength(1);
+	});
+
+	test('rejects a password confirmation mismatch without changing the users file', async () => {
+		const initial = 'toku@zasoque.org:{CRYPT}$2y$old\n';
+		const fixture = await createFixture(initial);
+
+		await expect(
+			fixture.creator().changePassword('toku@zasoque.org', {
+				password: 'new-secret',
+				confirmPassword: 'different'
+			})
+		).rejects.toMatchObject({ code: 'invalid_request' });
+		expect(await readFile(fixture.usersFilePath, 'utf8')).toBe(initial);
+	});
+
+	test('returns not found for a missing account', async () => {
+		const fixture = await createFixture('other@zasoque.org:{CRYPT}$2y$old\n');
+
+		await expect(
+			fixture.creator().changePassword('missing@zasoque.org', {
+				password: 'new-secret',
+				confirmPassword: 'new-secret'
+			})
+		).rejects.toMatchObject({ code: 'account_not_found' });
+	});
+
+	test('rejects invalid and non-zasoque.org addresses', async () => {
+		const fixture = await createFixture('toku@zasoque.org:{CRYPT}$2y$old\n');
+		for (const address of ['../toku@zasoque.org', 'Toku@zasoque.org', 'toku@example.com']) {
+			await expect(
+				fixture.creator().changePassword(address, {
+					password: 'new-secret',
+					confirmPassword: 'new-secret'
+				})
+			).rejects.toMatchObject({ code: 'invalid_request' });
+		}
 	});
 });
 

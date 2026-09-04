@@ -25,20 +25,37 @@ const server = createServer(async (request, response) => {
 		});
 		return;
 	}
-	if (request.method !== 'POST' || request.url !== '/accounts') {
+	const passwordAddress = matchPasswordChangeRoute(request);
+	const deleteAddress = matchAccountDeleteRoute(request);
+	const isCreateRequest = request.method === 'POST' && request.url === '/accounts';
+	if (!isCreateRequest && passwordAddress === null && deleteAddress === null) {
 		sendJson(response, 404, { error: { code: 'not_found', message: 'Not found.' } });
 		return;
 	}
-	if (!request.headers['content-type']?.toLowerCase().startsWith('application/json')) {
+	if (
+		deleteAddress === null &&
+		!request.headers['content-type']?.toLowerCase().startsWith('application/json')
+	) {
 		sendJson(response, 415, { error: { code: 'invalid_request', message: 'JSON is required.' } });
 		return;
 	}
 
 	try {
-		const body = await readJsonBody(request);
-		const result = await creator.create(body);
-		sendJson(response, 201, result);
-		console.info(`Created mail account ${result.address}`);
+		if (deleteAddress !== null) {
+			const result = await creator.delete(deleteAddress);
+			sendJson(response, 200, result);
+			console.info(`Deleted mail account ${result.address}; mailbox archived: ${result.mailboxArchived}`);
+		} else if (passwordAddress !== null) {
+			const body = await readJsonBody(request);
+			const result = await creator.changePassword(passwordAddress, body);
+			sendJson(response, 200, result);
+			console.info(`Changed password for mail account ${result.address}`);
+		} else {
+			const body = await readJsonBody(request);
+			const result = await creator.create(body);
+			sendJson(response, 201, result);
+			console.info(`Created mail account ${result.address}`);
+		}
 	} catch (error) {
 		if (error instanceof RequestBodyError) {
 			sendJson(response, error.status, {
@@ -48,19 +65,27 @@ const server = createServer(async (request, response) => {
 		}
 		if (error instanceof AccountCreatorError) {
 			const status =
-				error.code === 'account_exists' ? 409 : error.code === 'invalid_request' ? 400 : 500;
+				error.code === 'account_exists'
+					? 409
+					: error.code === 'account_not_found'
+						? 404
+						: error.code === 'protected_account'
+							? 403
+						: error.code === 'invalid_request'
+								? 400
+								: 500;
 			sendJson(response, status, {
 				error: {
 					code: error.code,
-					message: status === 500 ? 'Account creation failed.' : error.message
+					message: status === 500 ? 'Mail account operation failed.' : error.message
 				}
 			});
-			console.error(`Account creation failed (${error.code}).`);
+			console.error(`Mail account operation failed (${error.code}).`);
 			return;
 		}
-		console.error('Unexpected account creation failure.');
+		console.error('Unexpected mail account operation failure.');
 		sendJson(response, 500, {
-			error: { code: 'internal_error', message: 'Account creation failed.' }
+			error: { code: 'internal_error', message: 'Mail account operation failed.' }
 		});
 	}
 });
@@ -71,6 +96,30 @@ server.listen(PORT, HOST, () => {
 
 function isLoopbackRequest(request: IncomingMessage): boolean {
 	return request.socket.localAddress === HOST && request.socket.remoteAddress === HOST;
+}
+
+function matchPasswordChangeRoute(request: IncomingMessage): string | null {
+	if (request.method !== 'PATCH' || request.url === undefined) return null;
+	const match = /^\/accounts\/([^/]+)\/password$/.exec(
+		new URL(request.url, 'http://localhost').pathname
+	);
+	if (!match) return null;
+	try {
+		return decodeURIComponent(match[1]);
+	} catch {
+		return '';
+	}
+}
+
+function matchAccountDeleteRoute(request: IncomingMessage): string | null {
+	if (request.method !== 'DELETE' || request.url === undefined) return null;
+	const match = /^\/accounts\/([^/]+)$/.exec(new URL(request.url, 'http://localhost').pathname);
+	if (!match) return null;
+	try {
+		return decodeURIComponent(match[1]);
+	} catch {
+		return '';
+	}
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
