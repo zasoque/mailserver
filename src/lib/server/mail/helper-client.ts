@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import type {
 	AccountsApiError,
+	AccountsApiResponse,
 	ChangePasswordRequest,
 	ChangePasswordResponse,
 	CreateAccountRequest,
@@ -17,6 +18,22 @@ export class MailHelperClientError extends Error {
 	) {
 		super(message, options);
 		this.name = 'MailHelperClientError';
+	}
+}
+
+export async function listAccountsWithHelper(): Promise<AccountsApiResponse> {
+	try {
+		const body = await requestHelper('/accounts', 'GET');
+		if (!isAccountsApiResponse(body)) throw new Error('Invalid helper response.');
+		return body;
+	} catch (error) {
+		if (error instanceof MailHelperClientError && error.code === 'helper_unavailable') throw error;
+		throw new MailHelperClientError(
+			502,
+			'repository_error',
+			'The privileged mail helper could not load mail accounts.',
+			{ cause: error }
+		);
 	}
 }
 
@@ -125,6 +142,14 @@ function readHelperError(value: unknown): AccountsApiError['error'] {
 		typeof value === 'object' &&
 		value !== null &&
 		'error' in value &&
+		value.error === 'This account is protected and cannot be deleted.'
+	) {
+		return { code: 'protected_account', message: value.error };
+	}
+	if (
+		typeof value === 'object' &&
+		value !== null &&
+		'error' in value &&
 		typeof value.error === 'object' &&
 		value.error !== null &&
 		'code' in value.error &&
@@ -159,6 +184,24 @@ function isChangePasswordResponse(value: unknown): value is ChangePasswordRespon
 		'passwordChanged' in value &&
 		typeof value.address === 'string' &&
 		value.passwordChanged === true
+	);
+}
+
+function isAccountsApiResponse(value: unknown): value is AccountsApiResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'accounts' in value &&
+		Array.isArray(value.accounts) &&
+		value.accounts.every(
+			(account) =>
+				typeof account === 'object' &&
+				account !== null &&
+				'address' in account &&
+				'usageBytes' in account &&
+				typeof account.address === 'string' &&
+				(typeof account.usageBytes === 'number' || account.usageBytes === null)
+		)
 	);
 }
 

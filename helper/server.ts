@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AccountCreator, AccountCreatorError } from './account-creator';
+import { AccountReader } from './account-reader';
 
 const HOST = '127.0.0.1';
 const PORT = parsePort(process.env.MAIL_HELPER_PORT);
@@ -12,6 +13,7 @@ const creator = new AccountCreator({
 	uid: 500,
 	gid: 500
 });
+const reader = new AccountReader('/opt/homebrew/etc/dovecot/users', '/Users/Shared/vmail');
 
 const server = createServer(async (request, response) => {
 	setSecurityHeaders(response);
@@ -27,12 +29,14 @@ const server = createServer(async (request, response) => {
 	}
 	const passwordAddress = matchPasswordChangeRoute(request);
 	const deleteAddress = matchAccountDeleteRoute(request);
+	const isListRequest = request.method === 'GET' && request.url === '/accounts';
 	const isCreateRequest = request.method === 'POST' && request.url === '/accounts';
-	if (!isCreateRequest && passwordAddress === null && deleteAddress === null) {
+	if (!isListRequest && !isCreateRequest && passwordAddress === null && deleteAddress === null) {
 		sendJson(response, 404, { error: { code: 'not_found', message: 'Not found.' } });
 		return;
 	}
 	if (
+		!isListRequest &&
 		deleteAddress === null &&
 		!request.headers['content-type']?.toLowerCase().startsWith('application/json')
 	) {
@@ -41,10 +45,14 @@ const server = createServer(async (request, response) => {
 	}
 
 	try {
-		if (deleteAddress !== null) {
+		if (isListRequest) {
+			sendJson(response, 200, await reader.list());
+		} else if (deleteAddress !== null) {
 			const result = await creator.delete(deleteAddress);
 			sendJson(response, 200, result);
-			console.info(`Deleted mail account ${result.address}; mailbox archived: ${result.mailboxArchived}`);
+			console.info(
+				`Deleted mail account ${result.address}; mailbox archived: ${result.mailboxArchived}`
+			);
 		} else if (passwordAddress !== null) {
 			const body = await readJsonBody(request);
 			const result = await creator.changePassword(passwordAddress, body);
@@ -71,15 +79,19 @@ const server = createServer(async (request, response) => {
 						? 404
 						: error.code === 'protected_account'
 							? 403
-						: error.code === 'invalid_request'
+							: error.code === 'invalid_request'
 								? 400
 								: 500;
-			sendJson(response, status, {
-				error: {
-					code: error.code,
-					message: status === 500 ? 'Mail account operation failed.' : error.message
-				}
-			});
+			if (error.code === 'protected_account') {
+				sendJson(response, status, { error: error.message });
+			} else {
+				sendJson(response, status, {
+					error: {
+						code: error.code,
+						message: status === 500 ? 'Mail account operation failed.' : error.message
+					}
+				});
+			}
 			console.error(`Mail account operation failed (${error.code}).`);
 			return;
 		}

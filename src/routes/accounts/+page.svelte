@@ -28,6 +28,17 @@
 		<a class="button" href="/accounts/new">New account</a>
 	</header>
 
+	{#if data.deletedAccount}
+		<section class="notice" role="status">
+			<strong>Account {data.deletedAccount} was deleted.</strong>
+			<p>
+				{data.mailboxArchived
+					? 'Its mailbox has been archived.'
+					: 'No mailbox data existed to archive.'}
+			</p>
+		</section>
+	{/if}
+
 	{#if data.loadError}
 		<section class="error" role="alert">
 			<h2>Accounts could not be loaded</h2>
@@ -111,7 +122,8 @@
 	}
 	.table-wrap,
 	.error,
-	.empty {
+	.empty,
+	.notice {
 		overflow: hidden;
 		border: 1px solid #deded9;
 		border-radius: 12px;
@@ -156,6 +168,17 @@
 	.error,
 	.empty {
 		padding: 28px;
+	}
+	.notice {
+		margin-bottom: 20px;
+		padding: 16px 18px;
+		border-color: #b9d9c0;
+		background: #f1faf3;
+		color: #216e32;
+	}
+	.notice p {
+		margin: 3px 0 0;
+		font-size: 0.9rem;
 	}
 	.error {
 		border-color: #e7c4bd;

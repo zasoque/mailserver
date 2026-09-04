@@ -57,12 +57,14 @@ export interface AccountCreatorOptions {
 export interface AccountCreatorDependencies {
 	hashPassword?: (password: string) => Promise<string>;
 	chownTree?: (target: string, uid: number, gid: number) => Promise<void>;
+	moveMailbox?: (source: string, destination: string) => Promise<void>;
 }
 
 export class AccountCreator {
 	private operationQueue: Promise<void> = Promise.resolve();
 	private readonly hashPassword: (password: string) => Promise<string>;
 	private readonly chownTree: (target: string, uid: number, gid: number) => Promise<void>;
+	private readonly moveMailbox: (source: string, destination: string) => Promise<void>;
 
 	constructor(
 		private readonly options: AccountCreatorOptions,
@@ -72,6 +74,7 @@ export class AccountCreator {
 			dependencies.hashPassword ??
 			((password) => hashPasswordWithDoveadm(options.doveadmPath, password));
 		this.chownTree = dependencies.chownTree ?? chownDirectoryTree;
+		this.moveMailbox = dependencies.moveMailbox ?? rename;
 	}
 
 	create(input: unknown): Promise<CreateAccountResponse> {
@@ -232,7 +235,10 @@ export class AccountCreator {
 				await ensureArchiveRoot(archiveRoot);
 				archivePath = path.join(archiveRoot, `${archiveTimestamp()}-${address}`);
 				if (await pathExists(archivePath)) {
-					throw new AccountCreatorError('filesystem_error', 'The mailbox archive target already exists.');
+					throw new AccountCreatorError(
+						'filesystem_error',
+						'The mailbox archive target already exists.'
+					);
 				}
 			}
 
@@ -247,7 +253,7 @@ export class AccountCreator {
 				usersStat.gid
 			);
 
-			if (archivePath !== null) await rename(mailHome, archivePath);
+			if (archivePath !== null) await this.moveMailbox(mailHome, archivePath);
 			return { address, deleted: true, mailboxArchived: archivePath !== null };
 		} catch (error) {
 			if (usersFileChanged) {
@@ -265,7 +271,9 @@ export class AccountCreator {
 				}
 			}
 			if (error instanceof AccountCreatorError) throw error;
-			throw new AccountCreatorError('filesystem_error', 'Account deletion failed.', { cause: error });
+			throw new AccountCreatorError('filesystem_error', 'Account deletion failed.', {
+				cause: error
+			});
 		}
 	}
 }
@@ -429,7 +437,10 @@ function removeAccountLine(contents: string, address: string): string {
 		throw new AccountCreatorError('account_not_found', 'The mail account does not exist.');
 	}
 	if (matchingIndexes.length !== 1) {
-		throw new AccountCreatorError('filesystem_error', 'The users file contains duplicate accounts.');
+		throw new AccountCreatorError(
+			'filesystem_error',
+			'The users file contains duplicate accounts.'
+		);
 	}
 
 	const lineIndex = matchingIndexes[0];

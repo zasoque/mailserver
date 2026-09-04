@@ -1,9 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { AccountsApiError } from '$lib/mail/accounts';
-import {
-	deleteAccountWithHelper,
-	MailHelperClientError
-} from '$lib/server/mail/helper-client';
+import { deleteAccountWithHelper, MailHelperClientError } from '$lib/server/mail/helper-client';
 import type { RequestHandler } from './$types';
 
 export const DELETE: RequestHandler = async ({ params }) => {
@@ -18,10 +15,6 @@ export const DELETE: RequestHandler = async ({ params }) => {
 	}
 };
 
-function apiError(
-	status: number,
-	code: AccountsApiError['error']['code'],
-	message: string
-) {
+function apiError(status: number, code: AccountsApiError['error']['code'], message: string) {
 	return json({ error: { code, message } } satisfies AccountsApiError, { status });
 }

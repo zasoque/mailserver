@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { AccountCreator, AccountCreatorError } from './account-creator';
@@ -133,6 +133,70 @@ describe('AccountCreator', () => {
 			).rejects.toMatchObject({ code: 'invalid_request' });
 		}
 	});
+
+	test('deletes only the account line and archives the complete Maildir', async () => {
+		const initial =
+			'first@zasoque.org:{CRYPT}$2y$first\r\n' +
+			'test@zasoque.org:{CRYPT}$2y$test:extra\r\n' +
+			'last@zasoque.org:{CRYPT}$2y$last\r\n';
+		const fixture = await createFixture(initial);
+		const maildir = path.join(fixture.vmailRoot, 'zasoque.org', 'test', 'Maildir');
+		await mkdir(path.join(maildir, 'cur'), { recursive: true });
+		await mkdir(path.join(maildir, 'new'));
+		await mkdir(path.join(maildir, 'tmp'));
+		await writeFile(path.join(maildir, 'cur', 'message'), 'mail body');
+
+		const result = await fixture.creator().delete('test@zasoque.org');
+
+		expect(result).toEqual({ address: 'test@zasoque.org', deleted: true, mailboxArchived: true });
+		expect(await readFile(fixture.usersFilePath, 'utf8')).toBe(
+			'first@zasoque.org:{CRYPT}$2y$first\r\nlast@zasoque.org:{CRYPT}$2y$last\r\n'
+		);
+		expect(await readdir(path.join(fixture.vmailRoot, 'zasoque.org'))).not.toContain('test');
+		const archives = await readdir(path.join(fixture.vmailRoot, '.deleted'));
+		expect(archives).toHaveLength(1);
+		expect(archives[0]).toMatch(/^\d{8}T\d{9}-test@zasoque\.org$/);
+		expect(
+			await readFile(
+				path.join(fixture.vmailRoot, '.deleted', archives[0], 'Maildir', 'cur', 'message'),
+				'utf8'
+			)
+		).toBe('mail body');
+	});
+
+	test('restores authentication when mailbox archiving fails', async () => {
+		const initial = 'test@zasoque.org:{CRYPT}$2y$test\n';
+		const fixture = await createFixture(initial);
+		await mkdir(path.join(fixture.vmailRoot, 'zasoque.org', 'test', 'Maildir'), {
+			recursive: true
+		});
+		const creator = fixture.creator(
+			async () => undefined,
+			async () => {
+				throw new Error('simulated archive failure');
+			}
+		);
+
+		await expect(creator.delete('test@zasoque.org')).rejects.toMatchObject({
+			code: 'filesystem_error'
+		});
+		expect(await readFile(fixture.usersFilePath, 'utf8')).toBe(initial);
+		expect(await readdir(path.join(fixture.vmailRoot, 'zasoque.org'))).toContain('test');
+	});
+
+	test('refuses to delete the protected account', async () => {
+		const fixture = await createFixture('jeonhangyeol@zasoque.org:{CRYPT}$2y$owner\n');
+		await expect(fixture.creator().delete('jeonhangyeol@zasoque.org')).rejects.toMatchObject({
+			code: 'protected_account'
+		});
+	});
+
+	test('returns not found when deleting a missing account', async () => {
+		const fixture = await createFixture('other@zasoque.org:{CRYPT}$2y$other\n');
+		await expect(fixture.creator().delete('test@zasoque.org')).rejects.toMatchObject({
+			code: 'account_not_found'
+		});
+	});
 });
 
 async function createFixture(initialUsers = '') {
@@ -146,12 +210,16 @@ async function createFixture(initialUsers = '') {
 		root,
 		usersFilePath,
 		vmailRoot,
-		creator: (chownTree: () => Promise<void> = async () => undefined) =>
+		creator: (
+			chownTree: () => Promise<void> = async () => undefined,
+			moveMailbox?: (source: string, destination: string) => Promise<void>
+		) =>
 			new AccountCreator(
 				{ usersFilePath, vmailRoot, doveadmPath: '/unused', uid: 500, gid: 500 },
 				{
 					hashPassword: async () => '{BLF-CRYPT}$2y$test-hash',
-					chownTree
+					chownTree,
+					moveMailbox
 				}
 			)
 	};
