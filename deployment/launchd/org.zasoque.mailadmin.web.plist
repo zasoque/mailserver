@@ -9,9 +9,9 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Users/jeonhangyeol/.nvm/versions/node/v22.22.0/bin/node</string>
-		<string>/Users/jeonhangyeol/Programming/mailserver/deployment/start-web.mjs</string>
+		<string>/Users/jeonhangyeol/Documents/Programming/mailserver/deployment/start-web.mjs</string>
 	</array>
-	<key>WorkingDirectory</key><string>/Users/jeonhangyeol/Programming/mailserver</string>
+	<key>WorkingDirectory</key><string>/Users/jeonhangyeol/Documents/Programming/mailserver</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>HOME</key><string>/Users/jeonhangyeol</string>

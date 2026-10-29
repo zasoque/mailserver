@@ -11,7 +11,7 @@ root LaunchDaemon.
 
 ## 1. Build and verify
 
-From `/Users/jeonhangyeol/Programming/mailserver`:
+From `/Users/jeonhangyeol/Documents/Programming/mailserver`:
 
 ```sh
 bun install --frozen-lockfile
@@ -85,7 +85,7 @@ and a root-owned Bun copy. It then resolves the staged `server.ts` import graph 
 server; deployment fails immediately if any dependency is missing.
 
 ```sh
-cd /Users/jeonhangyeol/Programming/mailserver
+cd /Users/jeonhangyeol/Documents/Programming/mailserver
 command -v bun
 sudo deployment/stage-helper.sh "$(command -v bun)"
 ```
@@ -179,7 +179,7 @@ Authentication changes affect only the web build and web service. They do not re
 Postfix, or helper configuration changes:
 
 ```sh
-cd /Users/jeonhangyeol/Programming/mailserver
+cd /Users/jeonhangyeol/Documents/Programming/mailserver
 bun install --frozen-lockfile
 bun run check
 bun test
@@ -279,7 +279,7 @@ Deploy an alias feature update by rebuilding the web application and replacing t
 copy; editing the project checkout does not update the running helper:
 
 ```sh
-cd /Users/jeonhangyeol/Programming/mailserver
+cd /Users/jeonhangyeol/Documents/Programming/mailserver
 bun install --frozen-lockfile
 bun run check
 bun test
